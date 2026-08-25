@@ -18,15 +18,20 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class ReplayEnvironment(Protocol):
-    """可重放环境契约（定向重跑 AgentDebug 2509.25370 的执行侧）。
+    """可重放环境契约（阶段三起含两种恢复执行侧）。
 
-    ``rerun_from`` 保留轨迹前缀 ``[0, step)``，从 ``step`` 开始带反馈
-    重新执行，返回新轨迹（新 trace_id，meta 记录来源）。
+    * ``rerun_from``（AgentDebug 2509.25370 定向重跑）：保留轨迹前缀
+      ``[0, step)``，从 ``step`` 开始带反馈重新执行；
+    * ``resolve``（AgenTracer 2509.03312 反馈注入再求解）：不保留前缀，
+      从头完整重解任务，唯一携带的是反思反馈文本——每轮都是全新 episode。
+    两者都返回新轨迹（新 trace_id，meta 记录来源）。
     """
 
     def rerun_from(
         self, trajectory: "Trajectory", step: int, feedback: str
     ) -> "Trajectory": ...
+
+    def resolve(self, trajectory: "Trajectory", feedback: str) -> "Trajectory": ...
 
 
 @dataclass

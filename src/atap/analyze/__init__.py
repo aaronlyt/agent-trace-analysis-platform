@@ -2,5 +2,6 @@
 
 from atap.analyze.base import Analyzer
 from atap.analyze.judge_eval import Finding, JudgeEvalAnalyzer, JudgeVerdict
+from atap.analyze.loop_detect import LoopDetectAnalyzer
 
-__all__ = ["Analyzer", "JudgeEvalAnalyzer", "JudgeVerdict", "Finding"]
+__all__ = ["Analyzer", "JudgeEvalAnalyzer", "JudgeVerdict", "Finding", "LoopDetectAnalyzer"]

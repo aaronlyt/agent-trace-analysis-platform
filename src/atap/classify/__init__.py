@@ -2,5 +2,6 @@
 
 from atap.classify.base import Classifier
 from atap.classify.mast_judge import MastJudgeClassifier, MastLabel, MastLabels
+from atap.classify.rule_pack import RulePackClassifier
 
-__all__ = ["Classifier", "MastJudgeClassifier", "MastLabel", "MastLabels"]
+__all__ = ["Classifier", "MastJudgeClassifier", "MastLabel", "MastLabels", "RulePackClassifier"]

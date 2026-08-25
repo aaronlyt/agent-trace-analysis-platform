@@ -1,0 +1,36 @@
+# 阶段三全栈（离线，FakeLLM）：R5 签名 + 循环谓词 + L0 规则包 + L2 二分 + 反馈注入
+# 轨迹源为频谱语料：先 `atap corpus --out runs/corpus/traces.jsonl`
+run_name: offline-v3-fullstack
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: fake
+
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events              # R0：span 树 → 统一事件流
+    - ssf                           # R1：显著性折叠（TrajAudit）
+    - action_signature              # R5：九类动作 + 效果标签 + 锚集/LCS（TraceProbe）
+  analyze:
+    - judge_eval
+    - name: loop_detect             # 循环检测谓词（TraceProbe Table II）
+      params:
+        min_consecutive: 3          # 原文冻结阈值 10 为 SWE-Bench 口径，玩具域审计为 3
+  classify:
+    - mast_judge
+    - rule_pack                     # L0 免费规则包（AgentDebugX）
+  attribute:
+    - binary_search                 # L2 二分定位（Who&When ⌈log₂n⌉ 轮）
+  recover:
+    - name: feedback_injection      # AgenTracer 反馈注入再求解（3 轮全量重解）
+      params:
+        max_rounds: 3

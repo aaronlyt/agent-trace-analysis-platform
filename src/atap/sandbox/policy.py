@@ -94,7 +94,7 @@ def execute(task_id: str, fault: FaultSpec | None) -> dict[str, Any]:
 
     rec.add("start", "TASK_START", "env", payload={"task": task["text"]})
     if fault and fault.kind == "premature_termination":
-        rec.add(
+        plan_sid = rec.add(
             "plan", "LLM_CALL", "planner", phase="plan",
             payload={"content": f"plan: I recall the answer to '{task_id}' from memory; submit directly."},
         )
@@ -107,7 +107,9 @@ def execute(task_id: str, fault: FaultSpec | None) -> dict[str, Any]:
         ok, note = env.verify(task_id, answer, read_docs)
         rec.add("verify", "VERIFIER", "verifier", refs=[call], payload={"content": note})
         rec.add("end", "TASK_END", "env")
-        onset_sid = call
+        # onset=规划步（决定跳过检索的决策），非 submit 终止动作——
+        # Who&When Eq.5：最早"修正即可翻盘"的步是 plan（修正它→正常流程）
+        onset_sid = plan_sid
         return _finish(rec, task_id, fault, onset_sid, ok, note)
 
     rec.add(
@@ -318,10 +320,16 @@ def _finish(
 
 
 class ToySandbox:
-    """实现 ReplayEnvironment 协议：生成轨迹 + 定向重放。"""
+    """实现 ReplayEnvironment 协议：生成轨迹 + 定向重放 + 全量再求解。
 
-    def __init__(self) -> None:
+    ``llm`` 注入后，反馈消费升级为"关键词优先、LLM 语义兜底"（阶段三
+    修复真模型恢复 0/6 的已知限制）：环境知道自己注入的故障（构造侧
+    事实，非判官可见 GT），用 LLM 判断自由文本反馈是否针对该故障。
+    """
+
+    def __init__(self, llm: object | None = None) -> None:
         self._rr_counter = 0
+        self._llm = llm
 
     # -- 生成 ---------------------------------------------------------------
 
@@ -358,6 +366,84 @@ class ToySandbox:
             )
         rng.shuffle(traces)
         return traces
+
+    def generate_corpus(self, successes_per_task: int = 2) -> list[Trajectory]:
+        """SBFL 频谱语料（FAMAS 重复执行思想的确定性版）：每任务 K 条
+        成功 + 全部六种故障各 1 条——同任务的成败对照给频谱以变异。
+        确定性沙盒的"重复执行"无随机变异【适配：FAMAS 靠非确定性重放
+        采样，这里以故障×任务的完全交叉替代】，覆盖矩阵语义不变。"""
+        traces: list[Trajectory] = []
+        for task_id in env.TASKS:
+            for i in range(successes_per_task):
+                traces.append(
+                    self.generate(task_id, None, trace_id=f"{task_id}--ok{i}")
+                )
+            for kind in FAULTS:
+                traces.append(self.generate(task_id, kind))
+        return traces
+
+    # -- 全量再求解（AgenTracer 2509.03312 §5.3 反馈注入）--------------------
+
+    def resolve(self, trajectory: Trajectory, feedback: str) -> Trajectory:
+        """带反思反馈从头完整重解（新 episode，不保留前缀）。
+
+        故障状态取自**原轨迹** meta（重跑轨迹的 meta 已剥离 injected_fault，
+        链式传入会误判"无故障"而虚假成功——与 rerun_from 同一约定）。
+        反馈消费：关键词命中即移除故障；未命中且有注入 LLM 时问 LLM
+        （自由文本反馈的语义匹配）；都无则故障仍在、重解继续失败。
+        """
+        task_id = (trajectory.raw or {}).get("task_id") or trajectory.meta.get("task_id")
+        if task_id is None:
+            raise ValueError(f"轨迹 {trajectory.trace_id} 缺 task_id，无法重解")
+        inj = trajectory.meta.get("injected_fault") or {}
+        fault_kind = inj.get("kind")
+        fault = FAULTS.get(fault_kind) if fault_kind else None
+
+        removed = fault is not None and self._feedback_addresses(fault_kind, feedback)
+        new_run = execute(task_id, None if removed else fault)
+        self._rr_counter += 1
+        fault_active = fault is not None and not removed
+        return Trajectory(
+            trace_id=f"{trajectory.trace_id}-rs{self._rr_counter}",
+            task=trajectory.task,
+            events=self._flatten_to_events(new_run["spans"]),
+            outcome=Outcome(
+                success=new_run["outcome"]["success"] if not fault_active else False,
+                score=new_run["outcome"]["success"] and not fault_active,
+                note=new_run["outcome"]["note"] if not fault_active else trajectory.outcome.note,
+            ),
+            meta={
+                **{k: v for k, v in trajectory.meta.items() if k != "injected_fault"},
+                "rerun_of": trajectory.trace_id,
+                "resolve_mode": "full_reresolve",
+                "fault_removed": removed,
+                "feedback_snippet": feedback[:200],
+            },
+            raw={"task_id": task_id, "spans": new_run["spans"]},
+        )
+
+    @staticmethod
+    def _flatten_to_events(roots: list[dict]) -> list:
+        """新 rollout 的 span 树 → R0 事件流（与 rerun_from 的合并形态对齐，
+        供恢复轮内的反思调用直接渲染；闭环验证轮会再走 canonical_events
+        归一化，重复拍平幂等）。"""
+        from atap.core.schema import TraceEvent
+
+        out: list[TraceEvent] = []
+
+        def walk(nodes: list[dict], parent: str | None) -> None:
+            for n in nodes:
+                idx = len(out)
+                out.append(TraceEvent(
+                    id=f"e{idx:03d}", ts=float(idx), kind=n["kind"],
+                    agent=n.get("agent", "unknown"), action=n.get("action"),
+                    payload=dict(n.get("payload") or {}), refs=[],
+                    phase=n.get("phase"), parent=parent, index=idx,
+                ))
+                walk(n.get("children") or [], out[-1].id)
+
+        walk(roots, None)
+        return out
 
     # -- 定向重放（AgentDebug Algorithm 1 Stage 3）---------------------------
 
@@ -429,11 +515,33 @@ class ToySandbox:
 
     # -- 内部 ---------------------------------------------------------------
 
-    @staticmethod
-    def _feedback_addresses(fault_kind: str, feedback: str) -> bool:
-        """feedback 是否点名了该故障（伪判官的 fix 内嵌故障类型词）。"""
+    def _feedback_addresses(self, fault_kind: str, feedback: str) -> bool:
+        """feedback 是否点名/针对该故障。关键词优先（离线确定性）；
+        未命中且有注入 LLM 时语义兜底（环境侧自知故障规格，非判官 GT
+        泄漏——泄漏约束保护的是判官/归因器，不限制执行环境）。"""
         low = feedback.lower()
-        return fault_kind in low or fault_kind.replace("_", " ") in low
+        if fault_kind in low or fault_kind.replace("_", " ") in low:
+            return True
+        if self._llm is None:
+            return False
+        fault = FAULTS.get(fault_kind)
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "执行环境注入的故障规格：\n"
+                    f"故障类型：{fault_kind}\n描述：{fault.description if fault else ''}\n\n"
+                    f"求解系统在下一轮收到的修正反馈：\n{feedback[:1500]}\n\n"
+                    "该反馈是否针对此故障给出了修正指导？只回答 yes 或 no。"
+                ),
+            },
+        ]
+        result = self._llm.complete(messages, tag="feedback_match")
+        ans = str(result.text).strip().lower()
+        first = ans.split()[0] if ans.split() else ""
+        if first in ("yes", "no"):
+            return first == "yes"
+        return "yes" in ans
 
     @staticmethod
     def _flatten_spans(roots: list[dict]) -> list[dict]:

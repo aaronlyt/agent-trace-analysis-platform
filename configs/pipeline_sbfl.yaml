@@ -1,0 +1,37 @@
+# SBFL 频谱归因变体（FAMAS，跨轨迹聚合）：与 v3 全栈仅归因算法不同，供 compare 对比
+# 用法：atap compare --config configs/pipeline_offline_v3.yaml --config configs/pipeline_sbfl.yaml \
+#          --traces runs/corpus/traces.jsonl
+run_name: offline-sbfl
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: fake
+
+sandbox:
+  type: toy
+
+closed_loop: false
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+    - action_signature
+  analyze:
+    - judge_eval
+    - name: loop_detect
+      params:
+        min_consecutive: 3
+  classify:
+    - mast_judge
+    - rule_pack
+  attribute:
+    - name: sbfl                    # L0 频谱先验（run_corpus 跨轨迹聚合）
+      params:
+        lam: 0.9
+        top_k: 5
+  # recover 不配置：频谱先验不作终判，不接恢复

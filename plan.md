@@ -52,15 +52,81 @@ failures=0。**
   LLM 驱动的沙盒策略（阶段三可做），或沙盒反馈解析增强。
 - 伪判官的 6/6 证明的是框架管路与契约正确；真实分数如上，两者互补。
 
-### 阶段三（下一轮）
+### 论文一致性审计与修复（六路 subagent，2026-08-25）
 
-- [ ] 表征：+R5 动作签名+效果标签+LCS（TraceProbe 2607.06184）
-- [ ] 分析：+循环检测谓词（TraceProbe，确定性，消费 R5 签名）
-- [ ] 分类：+L0 免费规则包（AgentDebugX 2607.18754：畸形调用/无进展循环/过早成功声明）
-- [ ] 归因：+L2 二分定位（Who&When ⌈log₂n⌉ 轮）+ SBFL 频谱（FAMAS 2509.13782，
-      run_corpus 跨轨迹聚合，作 L2 先验）
-- [ ] 恢复：+归因反馈注入再求解（AgenTracer 2509.03312 多轮反馈）
-- [ ] 同一轨迹集不同 YAML 组合的算法对比跑法
+对照 refs/ 原文逐算法独立审计（SSF/MAST/All-at-Once/targeted_rerun/R0/
+故障注入六路），总体结论：机制复现忠实、无语义偏离；修复了审计发现的
+实质问题，并补齐全部声明缺口：
+
+- **few-shot off-by-one**（all_at_once/mast_judge）：示例改为"第二次调用
+  即首次重复"（step 5/6/7 重复 → 决定性错误在 6）——原示例会让真 LLM
+  在重复类故障上系统性早一步；
+- **FM-2.6 定义去污染**（taxonomy）：删除论文零支持的"（含畸形工具
+  调用）"扩写——该定义直接进判官 prompt，等于用适配定义引导判官命中
+  ground truth；适配移至 sandbox/faults.py 映射注释【适配】。FM-1.3/
+  1.5/2.5/3.1/3.3 定义同步回归 App. A 原文语义；FC3 改名 "Task
+  Verification"；
+- **t\* 选择规则**（targeted_rerun）：max(confidence) → (confidence,
+  -step)——并列取最早步，对齐 AgentDebug t\*←min(T\*)；产物 schema
+  统一（skipped 分支补 recovered/status）；
+- **premature_termination onset=plan 步**（原为 submit）：对齐 Who&When
+  Eq.5 最早决定性错误（修正规划步即可翻盘，早于终止动作一步）；伪判官
+  规则 4 同步归因到 submit 前的决策步；
+- 声明补齐：SSF（min_fold_len 豁免、loose=strict∪词边界叠加而非恢复
+  原文子串、strict 词表收窄、fold_ratio 分母口径）、mast_judge
+  （few-shot 来源、max_labels 截断、include_success 与 J.1 协议）、
+  all_at_once（54.33 为 With-GT 列口径）、targeted_rerun（每轮从原始
+  轨迹重放而非 τ⁽ᵏ⁻¹⁾）、R0（省略 AgentTrajectory 的 error/duration/
+  metadata/artifacts 四字段）、env（verifier 说明区分到故障组粒度）、
+  pipeline（闭环只验证最后一条 rerun、验证轮含嵌套恢复）；
+- 新增防泄漏回归测试：三判官 prompt 全文不得含故障类型词/GT 键。
+
+**验证：71 测试全绿（70+1）；离线 e2e 六故障 step/agent/MAST/恢复仍
+6/6，闭环验证轮 failures=0；七项针对性断言（定义去污染、t\* 规则、
+onset 对齐、Eq.5 反事实重放、few-shot 语义、六故障全对齐）通过。**
+
+### 阶段三：L0/L2 阶梯 + 跨轨迹聚合 + AgenTracer 恢复 ✅（2026-08-25）
+
+- [x] 表征：`action_signature`（R5：九类规范动作+参数指纹+七效果标签+锚集/里程碑
+      /LCS，TraceProbe 2607.06184——已用 paper-fetch 补入 refs/ 并对照原文实现；
+      效果标签为论文全集 7 个而非综述的 4 个；锚集按原文 oracle-free 回退路线取
+      "同任务成功轨迹读过的文档"；规范动作类不写回 `TraceEvent.action`——该字段
+      承载采集层工具名，判官渲染行与伪判官规则依赖它，改写等于变更判官视图）
+- [x] 分析：`loop_detect`（TraceProbe Table II 四谓词：search_loop/re_read_churn/
+      tool_oscillation/redundant_search；阈值参数化，默认冻结值 10 为 SWE-Bench
+      口径，玩具域配置审计为 3——原文明示阈值需按目标基准审计）
+- [x] 分类：`rule_pack`（L0 免费规则包，AgentDebugX：malformed/no-progress/
+      premature-success/invalid-output 四规则，触发条件自设【适配】——原文只有
+      一句话定义，精确规则在官方仓库未随论文发表）
+- [x] 归因：`binary_search`（Who&When Algorithm 2 逐行复现：只展示 [low,mid]、
+      裸文本 upper/lower 应答、⌈log₂n⌉ 轮、A\* 从事件读；收尾 refine 调用为
+      DeepDebug 风格工程增强）+ `sbfl`（FAMAS 式 2-7 逐式复现：γ/β/α/λ-decay
+      + Kulczynski2^λ，λ=0.9，`run_corpus` 跨轨迹作用域首用；LLM 层次聚类抽象
+      → R5 确定性签名【适配】；频谱单元排除 verifier/env 环境侧事件）
+- [x] 恢复：`feedback_injection`（AgenTracer §5.3：3 轮全量再求解、第 1 轮反馈
+      取归因 Hypothesis、后续轮判官反思再生成；`ReplayEnvironment` 协议 +resolve；
+      沙盒反馈消费升级"关键词优先、LLM 语义兜底"——修复真模型恢复 0/6 的已知
+      限制，环境侧自知故障规格不违反判官 GT 泄漏约束）
+- [x] 对比跑法：`atap compare`（同一轨迹集多配置对比：step/agent/MAST 命中、
+      恢复、闭环改善、LLM 调用分桶计数）+ `atap corpus`（频谱语料生成：
+      每任务 K 成功 + 6 故障交叉）
+
+**验收（离线，FakeLLM，seed=7，语料=每任务 2 成功+6 故障×3 任务=24 条）：**
+139 测试全绿（74 旧+65 新，含不变量/防泄漏回归）；阶段二栈回归 6/6×4 不变；
+阶段三全栈（configs/pipeline_offline_v3.yaml）——二分定位 **step 5/6、agent 6/6**
+（唯一偏差 step_repetition 5→8：二分在片段失去三次重复上下文后收敛到症状末次
+重复，与 Who&When 报告的二分 step 级弱于逐步审查方向一致，如实保留）；
+loop/rule 各命中靶故障；SBFL **4/6**（超预期 3/6：step_repetition 被 α 局部
+频率增强放大、premature/disobey/ungrounded 亦命中；miss 两例均可解释——
+malformed 一次性异常动作被 γ 覆盖比压制、info_withholding 内容级故障在动作谱
+不可见而牵连下游 report 步）；feedback_injection 恢复 **6/6**、闭环验证轮
+failures=0；compare 表：v3 全栈 15/18·18/18·18/18·147 calls vs SBFL 12/18·
+42 calls（L0 免判官调用）。
+
+**遗留：真实 LLM 复跑（nemotron 免费档）待 OPENAI_API_KEY 可用时执行
+`realtest_nemotron.py`（阶段二栈回归）+ v3 最小组合（二分 vs all_at_once 的
+step 级对比、`feedback_matching=llm` 的真模型恢复验证）——离线验收为准入门槛，
+此项非阻塞。**
 
 ### 远期（阶段四候选）
 

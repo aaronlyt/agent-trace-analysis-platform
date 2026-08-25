@@ -145,7 +145,7 @@ def _sig(fault: str, step: int, agent: str, detail: str) -> Signature:
         "malformed_tool_call": f"避免 malformed_tool_call：在 step {step} 调用工具前校验参数完整性再发起调用。",
         "step_repetition": f"避免 step_repetition：不要在 step {step} 重复相同的工具调用，应使用已有结果继续推进。",
         "info_withholding": f"避免 info_withholding：在 step {step} 如实报告检索到的文档，把结果传递给下游。",
-        "premature_termination": f"避免 premature_termination：在 step {step} 之前先检索并阅读证据文档，再提交答案。",
+        "premature_termination": f"避免 premature_termination：step {step} 的决策在未检索阅读证据的情况下就准备提交，应先 search 并 read_doc 再提交答案。",
         "ungrounded_citation": f"避免 ungrounded_citation：在 step {step} 只引用实际用 read_doc 读过的文档。",
         "disobey_task_spec": f"避免 disobey_task_spec：在 step {step} 按任务要求的格式给出答案（含必填的文档编号）。",
     }
@@ -191,11 +191,15 @@ def detect_signatures(lines: list[Line]) -> list[Signature]:
                 sigs.append(_sig("info_withholding", ln.idx, ln.agent, ln.content[:120]))
                 break
 
-    # 规则 4：过早终止 —— submit 前从未 read_doc
+    # 规则 4：过早终止 —— submit 前从未 read_doc。归因到 submit 前最后一次
+    # 决策（LLM_CALL）而非 submit 动作本身：决定跳过检索的规划步早于终止
+    # 动作（Who&When Eq.5 earliest），与沙盒 ground truth 的 onset=plan 对齐
     read_doc_calls = [c for c in calls if (c.action or "") == "read_doc"]
+    decisions = [ln for ln in lines if ln.kind == "LLM_CALL"]
     for c in calls:
         if (c.action or "") == "submit" and not [r for r in read_doc_calls if r.idx < c.idx]:
-            sigs.append(_sig("premature_termination", c.idx, c.agent, c.payload[:120]))
+            target = next((d for d in reversed(decisions) if d.idx < c.idx), c)
+            sigs.append(_sig("premature_termination", target.idx, target.agent, c.payload[:120]))
             break
 
     # 规则 5：无据引用 —— 答案/消息断言式引用了到该步为止从未 read 过的 doc id
@@ -253,7 +257,81 @@ def detect_signatures(lines: list[Line]) -> list[Signature]:
 # ---------------------------------------------------------------------------
 
 
+def _segment_local_signatures(lines: list[Line]) -> list[Signature]:
+    """二分定位轮次的**片段内**症状检测。
+
+    复用整轨规则之外补三条片段可见的判据（判官只能看到切片，必须靠
+    切片内证据作答；整轨规则本身不动——它服务于 all_at_once 的口径）：
+    * 空 payload 的 TOOL_CALL（畸形调用在调用行即可见，无需等错误观测）；
+    * LLM_CALL 自述"凭记忆直接提交"（过早终止的决策步文本）；
+    * 片段内已读到文档/非空检索，其后却声称"没有找到"（信息隐瞒的
+      片段内矛盾）。
+    """
+    sigs = detect_signatures(lines)
+    # 兜底签名（fault="unknown"）不携带症状证据：真实判官看到良性片段
+    # 会答 upper half，伪判官同样不能把"保守归因兜底"当作症状
+    sigs = [s for s in sigs if s.fault != "unknown"]
+    calls = [ln for ln in lines if ln.kind == "TOOL_CALL"]
+    for c in calls:
+        # 空 payload 的工具调用（畸形）：空 dict 渲染为无参行，调用行即可见
+        if c.action and not c.payload.strip() and not any(
+            s.fault == "malformed_tool_call" and s.step == c.idx for s in sigs
+        ):
+            sigs.append(
+                _sig("malformed_tool_call", c.idx, c.agent, "empty tool arguments")
+            )
+    evidence_idx: list[int] = []
+    for ln in lines:
+        if ln.kind == "TOOL_RESULT" and (ln.action or "") == "search":
+            m = _SEARCH_DOCS_RE.search(ln.content)
+            if m and int(m.group(1)) > 0:
+                evidence_idx.append(ln.idx)
+        if ln.kind == "TOOL_RESULT" and (ln.action or "") == "read_doc" \
+                and not is_error_observation(ln.content):
+            evidence_idx.append(ln.idx)
+    for ln in lines:
+        if ln.kind in ("AGENT_MESSAGE", "LLM_CALL", "HANDOFF") and re.search(
+            r"no (relevant|results|documents)|nothing found|未找到|没有找到", ln.content, re.I
+        ):
+            if any(h < ln.idx for h in evidence_idx) and not any(
+                s.fault == "info_withholding" and s.step == ln.idx for s in sigs
+            ):
+                sigs.append(_sig("info_withholding", ln.idx, ln.agent, ln.content[:120]))
+    for ln in lines:
+        if ln.kind == "LLM_CALL" and re.search(
+            r"recall|from memory|submit directly|凭记忆", ln.content, re.I
+        ):
+            if not any(s.fault == "premature_termination" for s in sigs):
+                sigs.append(_sig("premature_termination", ln.idx, ln.agent, ln.content[:120]))
+    return sigs
+
+
 def pseudo_judge_handler(tag: str, messages: list[ChatMessage]) -> "str | None":
+    if tag == "feedback_match":
+        # 环境侧调用，无轨迹块——必须在 find_trace_block 之前处理
+        # 故障规格 vs 自由文本反馈的确定性模拟：故障类型词命中即 yes；
+        # 否则按"故障规格与反馈的 CJK bigram 重叠"模拟语义理解
+        content = str(messages[0].get("content", "")) if messages else ""
+        m_kind = re.search(r"故障类型：([\w_]+)", content)
+        m_desc = re.search(r"描述：(.*)", content)
+        m_fb = re.search(r"修正反馈：\n(.*?)(?:\n\n|$)", content, re.S)
+        if not (m_kind and m_fb):
+            return "no"
+        kind = m_kind.group(1)
+        fb = m_fb.group(1).lower()
+        if kind in fb or kind.replace("_", " ") in fb:
+            return "yes"
+        desc = m_desc.group(1) if m_desc else ""
+        cjk = re.compile(r"[\u4e00-\u9fff]+")
+
+        def _bigrams(text: str) -> set[str]:
+            out: set[str] = set()
+            for run in cjk.findall(text):
+                out.update(run[i: i + 2] for i in range(len(run) - 1))
+            return out
+
+        return "yes" if len(_bigrams(desc) & _bigrams(fb)) >= 3 else "no"
+
     block = find_trace_block(messages)
     if block is None:
         return None
@@ -301,4 +379,49 @@ def pseudo_judge_handler(tag: str, messages: list[ChatMessage]) -> "str | None":
             },
             ensure_ascii=False,
         )
+
+    if tag == "binary_search":
+        # 片段内症状检测：有任何症状 → 错误在Shown下半段
+        seg_sigs = [] if succeeded else _segment_local_signatures(lines)
+        return "lower half" if seg_sigs else "upper half"
+
+    if tag == "binary_search_refine":
+        # 从 system 提示解析二分锁定的 step/agent（定位已定，反思不二猜）
+        system = str(messages[0].get("content", "")) if messages else ""
+        m_step = re.search(r"step (\d+)", system)
+        m_agent = re.search(r"agent ([A-Za-z0-9_\-]+)", system)
+        step = int(m_step.group(1)) if m_step else (sigs[0].step if sigs else 0)
+        agent = m_agent.group(1) if m_agent else (sigs[0].agent if sigs else "unknown")
+        hit = next((s for s in sigs if s.step == step), None)
+        if hit is None and sigs:
+            hit = sigs[0]
+        if hit is not None:
+            return json.dumps(
+                {
+                    "reason": hit.reason,
+                    "fix_suggestion": hit.fix,
+                    "confidence": 0.65,
+                    "failure_mode": hit.code,
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "reason": f"step {step}（agent {agent}）的行为构成最早的"
+                "决定性错误：修正该步即可改变失败走向。",
+                "fix_suggestion": f"复核 step {step}（agent {agent}）的决策依据并修正。",
+                "confidence": 0.4,
+                "failure_mode": None,
+            },
+            ensure_ascii=False,
+        )
+
+    if tag == "feedback_reflection":
+        s = sigs[0] if sigs else None
+        if s is not None:
+            feedback = f"{s.reason}。下一轮请避免：{s.fix}"
+        else:
+            feedback = "未见显式症状：下一轮请逐步核对任务要求后再提交。"
+        return json.dumps({"feedback": feedback}, ensure_ascii=False)
+
     return None

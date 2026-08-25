@@ -28,10 +28,16 @@ def build_pipeline(cfg: PipelineConfig) -> Pipeline:
     return Pipeline(algorithms)
 
 
-def build_context(cfg: PipelineConfig, run_dir: str | Path) -> RunContext:
+def build_context(
+    cfg: PipelineConfig,
+    run_dir: str | Path,
+    *,
+    llm: object | None = None,
+) -> RunContext:
+    """配置 → RunContext。``llm`` 可注入替代构建（compare 计数包装用）。"""
     run_dir = str(run_dir)
     ctx = RunContext(
-        llm=build_llm(cfg.llm),
+        llm=llm if llm is not None else build_llm(cfg.llm),
         store=build_store(cfg.store, run_dir),
         rng=random.Random(cfg.seed),
         run_dir=run_dir,
@@ -41,7 +47,9 @@ def build_context(cfg: PipelineConfig, run_dir: str | Path) -> RunContext:
         if kind == "toy":
             from atap.sandbox import ToySandbox
 
-            ctx.env = ToySandbox()
+            # 注入 LLM：沙盒反馈消费升级为"关键词优先、LLM 语义兜底"
+            #（修复真模型自由文本反馈恢复 0/6 的已知限制，见 plan.md）
+            ctx.env = ToySandbox(llm=ctx.llm)
         else:
             raise ValueError(f"未知 sandbox type：{kind!r}（可用：toy）")
     return ctx
@@ -52,6 +60,7 @@ def run_config(
     run_dir: str | Path,
     *,
     trajectories=None,
+    llm: object | None = None,
 ) -> tuple[list, list[PipelineReport]]:
     """完整执行：读轨迹 → 编排（可选闭环）→ 产物/报告落盘。"""
     run_dir = Path(run_dir)
@@ -59,7 +68,7 @@ def run_config(
     if trajectories is None:
         trajectories = build_source(cfg.source).load()
     pipeline = build_pipeline(cfg)
-    ctx = build_context(cfg, run_dir)
+    ctx = build_context(cfg, run_dir, llm=llm)
     if cfg.closed_loop:
         bundles, reports = pipeline.run_closed_loop(trajectories, ctx, max_rounds=1)
     else:
