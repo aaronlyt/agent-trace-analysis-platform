@@ -123,10 +123,23 @@ malformed 一次性异常动作被 γ 覆盖比压制、info_withholding 内容�
 failures=0；compare 表：v3 全栈 15/18·18/18·18/18·147 calls vs SBFL 12/18·
 42 calls（L0 免判官调用）。
 
-**遗留：真实 LLM 复跑（nemotron 免费档）待 OPENAI_API_KEY 可用时执行
-`realtest_nemotron.py`（阶段二栈回归）+ v3 最小组合（二分 vs all_at_once 的
-step 级对比、`feedback_matching=llm` 的真模型恢复验证）——离线验收为准入门槛，
-此项非阻塞。**
+**真实 LLM 验证（DeepSeek `deepseek-v4-flash`，temperature=0，2026-08-25，
+`realtest_deepseek.py`，同一六故障群体）：**
+
+- **stack-a 阶段二回归（all_at_once + targeted_rerun）：step 6/6、agent 6/6、
+  MAST 主标签 3/6、恢复 6/6（全部 fault_removed=True，1 轮即恢复）**——
+  显著优于此前 OpenRouter ox-alpha（step 4/6、agent 5/6、恢复 0/6）；
+  **"恢复 0/6"已知限制确认修复**：沙盒 LLM 语义反馈匹配把真模型自由文本
+  fix 建议正确判为"针对该故障"，六故障首轮全部移除故障恢复成功。
+- stack-b 阶段三（binary_search + feedback_injection）：step 2/6、agent 2/6、
+  恢复 6/6。二分在真判官上明显弱于单遍（MAST 3/6 持平）——与 Who&When
+  文献方向一致（二分 step 级弱于逐步审查、agent 级弱于 all-at-once）；
+  玩具轨迹短（11–17 事件，3–4 轮），判官连续偏置回答"lower half"即把
+  区间塌缩到 step 0/早期步（ungrounded/malformed 收敛到 TASK_START env
+  事件）。premature/step_repetition 两例二分正确命中。AgenTracer 式
+  反馈注入恢复与 targeted_rerun 同样 6/6。
+- 工程教训：思考型输出可耗尽 4096 max_tokens 导致 content 为空——真测
+  配置上限提至 8192（`realtest_deepseek.py` 内注明）。
 
 ### 远期（阶段四候选）
 

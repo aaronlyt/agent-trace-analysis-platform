@@ -1,5 +1,8 @@
 # atap — Agent 轨迹分析与错误归因平台
 
+模型设置 增加nvidia/nemotron-3.5-lightning:free，[REDACTED OpenRouter key]  run real test
+
+
 复现 [《Agent 轨迹分析与错误归因：整体流程·架构·算法与文献》](../../paper_research/general/papers/research_surveys/agents/error_analysis/整体流程架构与算法文献.md)
 的六环节流程（采集 → 表征 → 分析评测 → 错误分类打标 → 失败归因 → 恢复闭环），
 做成 **transformers 式可插拔框架**：每个算法一个模块、继承阶段基类、注册进
@@ -43,13 +46,15 @@ SBFL 频谱 4/6（miss 两例为方法边界：一次性动作被 γ 压制、�
 动作谱不可见）；反馈注入恢复 6/6、闭环 failures=0；对比表
 `v3 15/18·147 calls vs SBFL 12/18·42 calls`。
 
-真实 LLM 验证（OpenRouter `stealth/ox-alpha`，temperature=0）：**step 4/6、
-agent 5/6、MAST 主标签 3/6（标签集合命中 5/6）、恢复 0/6**——agent 级优于
-step 级，与 Who&When 的文献结论方向一致；恢复 0/6 的根因（脚本化沙盒只按
-关键词消费反馈）已在阶段三修复：沙盒反馈消费现为"关键词优先、LLM 语义
-兜底"（`ToySandbox(llm=...)`，runtime 自动注入），真模型复跑待
-`OPENAI_API_KEY` 可用时执行 `realtest_nemotron.py` 验证。离线 6/6 证明的是
-框架管路与契约正确，真实数字衡量判官能力，两者互补。
+真实 LLM 验证（两轮）。**DeepSeek `deepseek-v4-flash`**（temperature=0）：
+阶段二栈 **step 6/6、agent 6/6、MAST 主标签 3/6、恢复 6/6**——"恢复 0/6"
+的已知限制已由沙盒"关键词优先、LLM 语义兜底"反馈消费修复确认（六故障
+全部 1 轮恢复、fault_removed=True）；阶段三栈 binary_search step 2/6（与
+Who&When 文献"二分弱于单遍"方向一致：短轨迹下判官 lower-half 偏置会把
+区间塌缩到早期步）、feedback_injection 恢复同样 6/6。此前 OpenRouter
+`stealth/ox-alpha`：step 4/6、agent 5/6、恢复 0/6。离线 6/6 证明的是框架
+管路与契约正确，真实数字衡量判官能力，两者互补。复跑：
+`realtest_deepseek.py` / `realtest_nemotron.py`（密钥走环境变量，不落盘）。
 
 ## 已实现算法（轮次一：阶段一+二；轮次二：阶段三）
 
