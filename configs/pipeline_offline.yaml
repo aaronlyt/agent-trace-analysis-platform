@@ -1,0 +1,30 @@
+# 离线全链路配置（FakeLLM 确定性判官 + 玩具沙盒，零网络可复现）
+run_name: offline-full-pipeline
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/demo/traces.jsonl     # 先跑 `atap demo` 生成，或用 atap.sandbox 自写
+
+llm:
+  type: fake                        # 确定性伪判官（规则化症状检测，不用 ground truth）
+
+sandbox:
+  type: toy                         # ReplayEnvironment：定向重跑的执行侧
+
+closed_loop: true                   # recover 产物自动回到 analyze 验证改善（环节6→3）
+
+stages:
+  represent:
+    - canonical_events              # R0：span 树拍平为统一事件流
+    - ssf                           # R1：显著性折叠（TrajAudit 2605.26563）
+  analyze:
+    - judge_eval                    # LLM-as-judge 评测（MAST 判官管线风格）
+  classify:
+    - mast_judge                    # MAST 14 模式打标（2503.13657）
+  attribute:
+    - all_at_once                   # L1 单遍归因（Who&When 2505.00212）
+  recover:
+    - name: targeted_rerun          # 定向重跑（AgentDebug 2509.25370）
+      params:
+        max_rounds: 5
