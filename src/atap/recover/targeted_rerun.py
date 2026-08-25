@@ -6,9 +6,14 @@
 表面症状；反馈要"指明错误类型 + 可执行指导"，供 agent 在重跑时改道。
 
 本实现：t* 与反馈来自归因输出的 top Hypothesis（消费统一归因契约，
-不感知具体归因算法）；重放由 RunContext.env（ReplayEnvironment 协议）
-执行——文献警示（§7）：responsible agent 粒度过粗无法被增强消费，故
-本算法消费的是 (step, fix_suggestion) 两个细粒度字段。
+不感知具体归因算法）。t* 选择规则 = 置信度最高、并列取最早步——原文
+Stage 2 的 t*←min(T*)（最早关键步）主要由归因 prompt 的"最早的决定性
+错误"指令承载，此处做并列兜底【声明偏离：置信度优先于最早步】。重放
+由 RunContext.env（ReplayEnvironment 协议）执行，每轮从**原始轨迹**的
+t* 重放（原文伪代码链式传 τ⁽ᵏ⁻¹⁾；确定性沙盒下两者等价，且重跑轨迹
+的 meta 已剥离 injected_fault，链式传递会误判"无故障"而虚假成功）
+【声明偏离】。文献警示（§7）：responsible agent 粒度过粗无法被增强
+消费，故本算法消费的是 (step, fix_suggestion) 两个细粒度字段。
 
 产物：``{"origin", "t_star", "rounds", "attempts", "recovered"}``；
 重跑轨迹 append 到 bundle.reruns（新 trace_id，meta.rerun_of=原轨迹），
@@ -33,19 +38,20 @@ class TargetedRerunRecoverer(Recoverer):
         if not hyps:
             bundle.put(
                 "recover", self.name,
-                {"status": "skipped_no_hypothesis",
+                {"status": "skipped_no_hypothesis", "recovered": False,
                  "note": "失败轨迹无归因输出：恢复必须消费归因（文献 §7 断裂警示）"},
             )
             return
         if ctx.env is None:
             bundle.put(
                 "recover", self.name,
-                {"status": "no_replay_environment",
+                {"status": "no_replay_environment", "recovered": False,
                  "note": "RunContext.env 未配置（sandbox: {type: toy}）"},
             )
             return
 
-        top = max(hyps, key=lambda h: h.confidence)  # 平手取首个（稳定）
+        # 置信度最高、并列取最早步（对齐原文 t*←min(T*) 的最早关键步原则）
+        top = max(hyps, key=lambda h: (h.confidence, -h.step))
         max_rounds = int(self.param("max_rounds", 5))
         feedback = top.fix_suggestion or top.root_cause
         attempts: list[dict] = []
@@ -74,6 +80,7 @@ class TargetedRerunRecoverer(Recoverer):
             "recover",
             self.name,
             {
+                "status": "done",
                 "origin": bundle.trace_id,
                 "t_star": top.step,
                 "responsible_agent": top.agent,

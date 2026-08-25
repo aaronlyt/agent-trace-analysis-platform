@@ -33,7 +33,11 @@ FAULTS: dict[str, FaultSpec] = {
         FaultSpec(
             kind="malformed_tool_call", agent="searcher", mast_code="FM-2.6",
             onset_logical="search",
-            description="searcher 发起缺参的畸形工具调用，环境返回错误（AgentDebugX 免费规则包的首要靶症状）",
+            description=(
+                "searcher 发起缺参的畸形工具调用，环境返回错误（AgentDebugX 免费"
+                "规则包的首要靶症状；MAST 14 模式无工具格式专门类，最近似归入"
+                "FM-2.6 推理-行动失配【适配】）"
+            ),
         ),
         FaultSpec(
             kind="info_withholding", agent="searcher", mast_code="FM-2.4",
@@ -42,13 +46,20 @@ FAULTS: dict[str, FaultSpec] = {
         ),
         FaultSpec(
             kind="premature_termination", agent="planner", mast_code="FM-3.1",
-            onset_logical="submit",
-            description="planner 跳过检索直接凭记忆提交答案（MAST FM-3.1）",
+            onset_logical="plan",
+            description=(
+                "planner 跳过检索直接凭记忆提交答案（MAST FM-3.1；onset=决定"
+                "跳过检索的规划步——Who&When Eq.5 最早决定性错误，早于 submit "
+                "终止动作一步）"
+            ),
         ),
         FaultSpec(
             kind="ungrounded_citation", agent="reporter", mast_code="FM-3.3",
             onset_logical="compose",
-            description="reporter 引用检索到但从未 read 过的文档（DRIFT 无支撑主张的靶症状；验证不正确 FM-3.3）",
+            description=(
+                "reporter 引用检索到但从未 read 过的文档（DRIFT 无支撑主张的靶"
+                "症状；做了验证但把未读文档当作已核实依据，MAST FM-3.3）"
+            ),
         ),
         FaultSpec(
             kind="disobey_task_spec", agent="reporter", mast_code="FM-1.1",

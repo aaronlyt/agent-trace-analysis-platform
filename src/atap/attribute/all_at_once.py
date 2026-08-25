@@ -2,8 +2,11 @@
 
 机制：LLM 单窗口读取 query + 完整失败日志（本实现消费 SSF 折叠视图以
 抗长轨迹噪声），一次输出责任 agent + 决定性错误步 + 原因。原文结论：
-agent 级最佳（GPT-4o 主表 54.33、~17K token），step 级偏弱（12.5）——
-故 agent 级结论为主、step 为辅（阶段三用二分定位补 step 级）。
+agent 级最佳（GPT-4o 主表 54.33——注意该数为 With-GT 列数字；本实现
+不注入 gold，对应 Without-GT 列 51.12）、~17K token，step 级偏弱
+（12.5）——故 agent 级结论为主、step 为辅（阶段三用二分定位补 step 级）。
+prompt 中的 MAST 定义块与 few-shot 示例是论文 G.1 之外的工程增强
+（``few_shot=False`` 可关）。
 
 统一输出契约（文献 §6）：结果转为 core.schema.Hypothesis 的 ranked list
 （本算法单假设；证据引文 = 责任步渲染行 + verifier 行）。
@@ -41,8 +44,9 @@ _SYSTEM = (
     "可参考 MAST 失败模式代码：\n{definitions}"
 )
 _FEW_SHOT = (
-    "示例：searcher 在 step 5 起重复三次相同 search 直到预算耗尽、最终提交"
-    "失败——责任 agent=searcher、step=5（首次重复处），failure_mode=FM-1.3。"
+    "示例：searcher 的同一 search 调用出现在 step 5/6/7（无进展重复）直至"
+    "预算耗尽、最终提交失败——责任 agent=searcher、step=6（第二次调用即"
+    "首次重复，最早的重复才是决定性错误），failure_mode=FM-1.3。"
 )
 
 

@@ -96,6 +96,11 @@ class Pipeline:
     ) -> tuple[list["TrajectoryBundle"], list[PipelineReport]]:
         """闭环：跑完一轮后，把 recover 产出的新轨迹送回全流程验证改善。
 
+        细节（与 AgentDebugX"失败重入循环"表述的粒度差异）：每个 origin
+        只取其**最后一条** rerun 进验证轮（中途失败的尝试不参与）；
+        验证轮会再跑 recover——仍失败的重跑会被再次归因重跑（嵌套恢复），
+        受 ``max_rounds=1`` 限制为单轮验证。
+
         返回**第一轮的 bundles**（保留完整归因/恢复产物），其中每条被重跑
         的轨迹额外挂 ``recover/closed_loop`` 产物记录验证结论；验证轮的
         报告追加在 reports 里（环节 6→3 回路）。

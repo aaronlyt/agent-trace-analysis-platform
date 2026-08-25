@@ -14,6 +14,7 @@ from atap.core.registry import create
 from atap.llm.fake_client import FakeLLMClient
 from atap.llm.pseudo_judge import _parse_block
 from atap.sandbox import ToySandbox
+from atap.sandbox.faults import FAULTS
 
 
 def _bundle(task="q-trajaudit", fault=None):
@@ -118,3 +119,48 @@ def test_judges_require_r0_events():
     b = TrajectoryBundle(t)
     with pytest.raises(ValueError, match="canonical_events"):
         JudgeEvalAnalyzer().run_one(b, RunContext(llm=FakeLLMClient()))
+
+
+def test_parse_structured_tolerates_reasoning_noise():
+    """推理型模型加固：思考文本/围栏/单引号 dict 均不影响结构化解析。"""
+    from atap.analyze.judge_eval import JudgeVerdict
+    from atap.llm.base import parse_structured
+
+    # 1) 思考文本在前（其中含伪花括号片段），真 JSON 在后
+    noisy = (
+        'Let me think... the schema needs {"score"} maybe { \'x\': 1 }.\n'
+        "After analysis: {\"score\": 2.5, \"summary\": \"ok\", \"findings\": []}"
+    )
+    assert parse_structured(noisy, JudgeVerdict).score == 2.5
+    # 2) markdown 围栏包裹
+    fenced = "结论如下：\n```json\n{\"score\": 9.0, \"summary\": \"s\", \"findings\": []}\n```"
+    assert parse_structured(fenced, JudgeVerdict).score == 9.0
+    # 3) 单引号 Python 风格 dict（literal_eval 回退）
+    single = "{'score': 5.0, 'summary': 's', 'findings': []}"
+    assert parse_structured(single, JudgeVerdict).score == 5.0
+    # 4) 字符串字面量内的花括号不干扰平衡扫描
+    braces_in_str = '{"score": 1.0, "summary": "has } brace { inside", "findings": []}'
+    assert parse_structured(braces_in_str, JudgeVerdict).score == 1.0
+
+
+def test_judge_prompts_do_not_leak_ground_truth():
+    """防泄漏回归：三个判官的输入 prompt 绝不含 ground truth 键或故障类型词。
+
+    trace_id 含故障名（如 q-trajaudit--info_withholding）但渲染视图不含
+    trace_id/meta；本断言固化该契约，防止未来 prompt 改动引入泄漏。
+    """
+    gt_tokens = (*FAULTS, "injected_fault", "mast_code", "ground truth")
+    for kind in FAULTS:
+        b, ctx = _bundle("q-trajaudit", kind)
+        fake = FakeLLMClient()
+        ctx.llm = fake
+        JudgeEvalAnalyzer().run_one(b, ctx)
+        MastJudgeClassifier().run_one(b, ctx)
+        AllAtOnceAttributor().run_one(b, ctx)
+        assert fake.calls, f"{kind}: 判官未被调用"
+        for call in fake.calls:
+            blob = " ".join(
+                str(m.get("content", "")) for m in call["messages"]
+            )
+            for tok in gt_tokens:
+                assert tok not in blob, f"{kind}: prompt 泄漏 {tok!r}（tag={call['tag']}）"

@@ -138,15 +138,20 @@ class OpenAICompatibleLLMClient:
             return LLMResult(text=text)
         last_err: Exception | None = None
         retry_messages = list(payload_messages)
-        for _ in range(2):  # 解析失败带错误重试一次
+        for _ in range(3):  # 解析失败带错误重试（共 2 次重试机会）
             try:
                 return LLMResult(text=text, parsed=parse_structured(text, schema))
             except LLMError as e:
                 last_err = e
-                retry_messages.append({"role": "assistant", "content": text})
+                retry_messages.append({"role": "assistant", "content": text[:2000]})
                 retry_messages.append(
                     {"role": "user",
-                     "content": f"你的回复无法解析：{e}\n请重新只输出符合 Schema 的 JSON 对象。"}
+                     "content": (
+                         f"你上一条回复无法解析为 JSON：{e}\n"
+                         "忽略之前的全部输出，现在重新回答：只输出一个符合上述 "
+                         "Schema 的 JSON 对象——以 { 开头、以 } 结尾，不要任何"
+                         "解释、推理过程或 markdown 围栏。"
+                     )}
                 )
                 resp = self._create(retry_messages, use_model, tag)
                 text = resp.choices[0].message.content or ""

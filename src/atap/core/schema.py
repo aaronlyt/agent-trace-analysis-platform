@@ -8,6 +8,11 @@ AgentTrajectory 事件表示（AgentDebugX, arXiv:2607.18754）。
 * 纯 stdlib dataclass，JSON 可序列化（core 零三方依赖）。
 * ``refs`` 字段是引用边（本事件消费了哪些先前信息产物），为 R2 信息依赖图
   （IDG）与根因回溯预留；``parent`` 保留 span 树的父子关系。
+* 相对 AgentTrajectory 原始 11 字段（type/agent/module/step index/parent/
+  timestamp/inputs/outputs/error/duration/metadata/artifacts），R0 省略
+  error/duration/metadata/artifacts 四字段【声明简化】：error 语义由
+  ``payload["content"]`` 的错误前缀约定承载（render.is_error_observation
+  消费），artifacts 留待多模态/GUI 轨迹需要时扩展。
 * ``Trajectory.raw`` 允许携带采集层原始形态（嵌套 span 树），由
   represent/canonical_events 负责拍平为 ``events``。
 """

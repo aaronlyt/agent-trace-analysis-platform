@@ -157,7 +157,8 @@ def verify(task_id: str, answer: str, read_docs: list[str]) -> tuple[bool, str]:
     """验证器：可观测失败说明（伪判官/判官 prompt 都只能看到这个文本）。
 
     检查顺序刻意区分故障：未读任何文档 → 无据引用 → 缺失引用格式 →
-    答案错误，保证不同故障产生可区分的 verifier 说明。
+    答案错误。说明文本把六种故障区分到"故障组"粒度（前两类各由两种
+    故障共享），六种细粒度区分由轨迹症状（判官可见的事件行）补全。
     """
     task = TASKS[task_id]
     gold_doc, gold_answer = task["gold_doc"], task["gold_answer"]

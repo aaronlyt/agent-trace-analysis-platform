@@ -1,0 +1,38 @@
+# 真实 LLM 配置（OpenRouter 免费档：nvidia/nemotron-3.5-lightning:free）
+# 需要环境变量：OPENAI_API_KEY（OpenRouter sk-or-v1-...）、
+#               OPENAI_BASE_URL=https://openrouter.ai/api/v1
+# 依赖：pip install 'atap[llm]'
+run_name: nemotron-full-pipeline
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/demo/traces.jsonl
+
+llm:
+  type: openai
+  model: "nvidia/nemotron-3.5-lightning:free"   # OpenRouter 免费档模型
+  temperature: 0.0                               # 判官类任务取 0 保证可复现
+  request_interval: 3.0                          # 免费档限流更紧，加大节流间隔
+
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+  analyze:
+    - name: judge_eval
+      params:
+        only_failures: false      # 成功轨迹也评测（分数基线）
+  classify:
+    - mast_judge
+  attribute:
+    - all_at_once
+  recover:
+    - name: targeted_rerun
+      params:
+        max_rounds: 5

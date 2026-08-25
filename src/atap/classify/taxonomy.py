@@ -1,10 +1,13 @@
 """分类词表 —— MAST 14 失败模式 + 融合标签结构（共享词表，非算法模块）。
 
 MAST（arXiv:2503.13657，Figure 1 / Appendix A）：3 类 14 种，1,642 条轨迹
-人工 κ=0.88、判官 κ=0.77。定义经二次校验（refs/2503.13657_mast 原文）。
+人工 κ=0.88、判官 κ=0.77。定义对齐 refs/2503.13657_mast 原文（App. A），
+保持论文语义不扩写——本词表经 mast_definitions_block() 直接进入判官
+prompt，任何项目适配都必须放在沙盒映射层（sandbox/faults.py，标注【适配】），
+否则等于用改写的定义引导判官命中 ground truth。
 
-融合标签结构（文献 §5）：(交互=MAST) × (模块=AgentError) × (系统级=SysTax)
-× (责任侧=Model or Harness)。阶段二只填 MAST 维；其余维度留给阶段三的
+融合标签结构（架构文档）：(交互=MAST) × (模块=AgentError) × (系统级=SysTax)
+× (责任侧=Model or Harness)。阶段二只填 MAST 维；其余维度留给后续的
 AgentErrorTaxonomy / 系统级 taxonomy / 责任侧判官增量填充。
 """
 
@@ -15,7 +18,7 @@ from dataclasses import dataclass, field
 MAST_CATEGORIES: dict[str, str] = {
     "FC1": "System Design Issues（系统设计问题）",
     "FC2": "Inter-Agent Misalignment（智能体间失配）",
-    "FC3": "Task-Verification Issues（任务验证问题）",
+    "FC3": "Task Verification（任务验证问题）",
 }
 
 MAST_MODES: dict[str, dict[str, str]] = {
@@ -33,7 +36,7 @@ MAST_MODES: dict[str, dict[str, str]] = {
     "FM-1.3": {
         "category": "FC1",
         "name": "Step repetition",
-        "definition": "无必要地重复已完成/已失败的步骤，造成延迟、冗余或预算耗尽。",
+        "definition": "无必要地重复已完成的步骤，造成延迟、冗余或预算耗尽。",
     },
     "FM-1.4": {
         "category": "FC1",
@@ -43,7 +46,7 @@ MAST_MODES: dict[str, dict[str, str]] = {
     "FM-1.5": {
         "category": "FC1",
         "name": "Unaware of termination conditions",
-        "definition": "不理解或未识别任务应终止的条件，导致流程悬置或错判完成。",
+        "definition": "不理解或未识别任务应终止的条件，导致流程不必要地延续或悬置。",
     },
     # ---- FC2 智能体间失配 ----
     "FM-2.1": {
@@ -69,18 +72,18 @@ MAST_MODES: dict[str, dict[str, str]] = {
     "FM-2.5": {
         "category": "FC2",
         "name": "Ignored other agent's input",
-        "definition": "忽视其他 agent 显式提供的输入或反馈，行为与之矛盾。",
+        "definition": "忽视或未充分考虑其他 agent 提供的输入或建议，导致次优决策或错失协作机会。",
     },
     "FM-2.6": {
         "category": "FC2",
         "name": "Reasoning-action mismatch",
-        "definition": "陈述的推理/计划与实际执行的行动不一致（含畸形工具调用）。",
+        "definition": "陈述的推理过程与实际执行的行动不一致。",
     },
     # ---- FC3 任务验证问题 ----
     "FM-3.1": {
         "category": "FC3",
         "name": "Premature termination",
-        "definition": "任务尚未完成（未验证/无证据）即宣布完成并终止。",
+        "definition": "在必要信息尚未交换或目标尚未达成时即终止任务，导致不完整或不正确的结果。",
     },
     "FM-3.2": {
         "category": "FC3",
@@ -90,7 +93,7 @@ MAST_MODES: dict[str, dict[str, str]] = {
     "FM-3.3": {
         "category": "FC3",
         "name": "Incorrect verification",
-        "definition": "验证方式本身错误（如引用未读文档、假阳性通过），给出误导性结论。",
+        "definition": "对关键信息或决策的验证方式本身错误（假阳性通过、把未核实信息当作已验证依据），给出误导性结论。",
     },
 }
 
