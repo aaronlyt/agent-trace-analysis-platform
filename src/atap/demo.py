@@ -43,9 +43,10 @@ def run_demo(seed: int = 7, out: str = "runs/demo") -> None:
     )
     bundles, reports = run_config(cfg, out_dir)
 
+    n_ok = sum(1 for b in bundles if b.succeeded)
     print("=" * 78)
     print(f"atap 离线全链路演示  seed={seed}  traces={len(bundles)}  "
-          f"(3 成功 + 6 故障注入)")
+          f"({n_ok} 成功 + {len(bundles) - n_ok} 故障注入)")
     print("=" * 78)
     n_hit_step = n_hit_agent = n_hit_code = n_recovered = n_failed = 0
     for b in bundles:

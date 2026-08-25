@@ -32,6 +32,13 @@ round0: traces=7 failures=6 attributed=6 reruns=6(ok=6)
 round1: traces=7 failures=0   ← 重跑轨迹全部通过全流程闭环验证
 ```
 
+真实 LLM 验证（OpenRouter `stealth/ox-alpha`，temperature=0）：**step 4/6、
+agent 5/6、MAST 主标签 3/6（标签集合命中 5/6）、恢复 0/6**——agent 级优于
+step 级，与 Who&When 的文献结论方向一致；恢复 0/6 是因为脚本化沙盒只能
+按故障类型关键词消费反馈，而真模型的自由文本建议匹配不上（已知限制，
+详见 plan.md"真实 LLM 验证"节）。离线 6/6 证明的是框架管路与契约正确，
+真实数字衡量判官能力，两者互补。
+
 ## 已实现算法（轮次一：阶段一 + 阶段二）
 
 | 流程 | 算法 | 文献 |
