@@ -18,7 +18,11 @@ to algorithms).
 Note: mixing attribution algorithms changes t* selection
 (``hypotheses()`` takes max confidence across algorithms) -- each config in
 a comparison experiment should configure exactly one attribution algorithm
-(or explicitly accept the mixing semantics).
+(or explicitly accept the mixing semantics). The sanctioned exception is a
+final-review attributor declaring ``supersedes`` (counterfactual_replay):
+its reviewed copy replaces the upstream original per (agent, step), so
+"base attributor + counterfactual_replay" is one logical attribution
+source, not a mix.
 """
 
 from __future__ import annotations

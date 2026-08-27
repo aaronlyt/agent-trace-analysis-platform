@@ -35,7 +35,13 @@ and takes no part in the verdict
 [weakened claim]), refuted = the edit did not change the course (the
 candidate is pseudo-causal/a symptom step). Validated candidates get
 confidence +0.2 / refuted −0.3 [not specified in the paper: values chosen by
-us] — the output is still the unified Hypothesis.
+us] — the output is still the unified Hypothesis. The artifact declares
+``"supersedes": true``: ``bundle.hypotheses()`` replaces each reviewed
+upstream hypothesis (same agent+step) with the adjusted copy, so the ±
+adjustment actually moves downstream ``max(confidence)`` selections
+(targeted_rerun's t*, compare's hit evaluation) — without it a refuted
+candidate (−0.3) would forever lose to its own un-reviewed original and the
+review would have no effect [repository convention].
 
 [adaptation] Window and decoding declarations (documentation only, no
 behavior change): (a) the k-event observation window **includes the
@@ -201,6 +207,9 @@ class CounterfactualReplayAttributor(Attributor):
                 "verdicts": verdicts,
                 "role": "L3_counterfactual_verifier",
                 "horizon": k,
+                # every reviewed (agent, step) replaces its upstream original
+                # in bundle.hypotheses() -- see TrajectoryBundle.hypotheses
+                "supersedes": True,
                 "note": "validated = editing the candidate step changed the failure's course; refuted = pseudo-causal or a symptom step",
             },
         )

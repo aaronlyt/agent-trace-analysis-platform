@@ -83,7 +83,14 @@ class AllAtOnceAttributor(Attributor):
                 f"{bundle.trace_id} has no R0 event stream: configure canonical_events first"
             )
         if bundle.succeeded and not self.param("include_success", False):
-            return  # successful trajectories produce no attribution (no artifact recorded)
+            # successful trajectories produce no attribution, but the artifact
+            # still lands (repository-wide contract: downstream must be able
+            # to tell "ran and skipped" from "not configured at all")
+            bundle.put(
+                "attribute", self.name,
+                {"hypotheses": [], "status": "success_no_attribution"},
+            )
+            return
         if ctx.llm is None:
             raise RuntimeError("all_at_once requires an LLM client (RunContext.llm)")
 

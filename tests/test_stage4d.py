@@ -388,3 +388,28 @@ def test_langfuse_import_accepts_legacy_observation_create(tmp_path):
         assert _refs_sig(r) == _refs_sig(o)
         assert r.outcome.success == o.outcome.success
         assert "injected_fault" not in r.meta
+
+
+def test_export_strips_rerun_gt_copies():
+    """Rerun trajectories carry ``origin_fault`` (the full injected-fault
+    copy kept for chain re-attribution) and ``fault_removed`` (the
+    environment's construction-side removal signal) in meta -- the export
+    deny-list must strip both, not just ``injected_fault`` (review
+    2026-08-27 P0: the GT used to leave verbatim through both exporters
+    under a different key)."""
+    sb = ToySandbox()
+    b = TrajectoryBundle(sb.generate("q-who-when", "info_withholding"))
+    create("represent", "canonical_events").run_one(b, RunContext())
+    t = b.trajectory
+    gt = t.meta["injected_fault"]
+    rerun = sb.rerun_from(t, gt["step"], "faithfully report the documents")
+    assert "injected_fault" not in rerun.meta          # _copy_meta drops it
+    assert "origin_fault" in rerun.meta and "fault_removed" in rerun.meta
+    assert rerun.meta["origin_fault"] == gt            # the full GT copy
+    for payload in (export_langfuse([rerun]), export_otel([rerun])):
+        blob = json.dumps(payload)
+        for key in ("injected_fault", "origin_fault", "fault_removed"):
+            assert key not in blob, f"{key} leaked through export"
+        # the GT payload itself (mast_code exists only in fault meta) never
+        # leaves through either exporter
+        assert gt["mast_code"] not in blob

@@ -137,6 +137,26 @@ def test_collinear_features_are_aliases_not_two_signals():
     assert version["firing_features_independent"] == [
         f for f in version["firing_features"] if f != "failure"
     ]
+    # the per-pair dedup that produced it is recorded next to the entry
+    assert version["alias_dedup"] == [["length_bin", "failure"]]
+
+
+def test_alias_scope_follows_the_compared_pair():
+    """Alias detection runs on the compared pair's own rows, not the whole
+    corpus: features collinear inside one pair need not be collinear
+    corpus-wide (and vice versa), and the dedup must guard exactly the two
+    distributions being compared (review 2026-08-27)."""
+    from atap.analyze.drift_detect import _alias_pairs
+
+    def row(length, failed, task):
+        return {"length_bin": length, "task_id": task, "failed": failed}
+
+    ga = [row("13", 1, "t1")] * 5
+    gb = [row("17", 0, "t2")] * 5
+    gc = [row("13", 0, "t3")] * 5   # a third group breaks the global bijection
+    assert ("length_bin", "failure") in _alias_pairs(ga + gb)
+    assert all(set(p) != {"length_bin", "failure"}
+               for p in _alias_pairs(ga + gb + gc))
 
 
 def test_single_scope_note():

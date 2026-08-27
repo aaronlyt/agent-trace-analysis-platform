@@ -213,7 +213,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="atap", description="Agent trajectory analysis and error attribution platform")
+    parser = argparse.ArgumentParser(prog="atap", description="Agent Trace Analysis Platform (ATAP)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="DEBUG-level process logs (default INFO → stderr + run.log)")
     sub = parser.add_subparsers(dest="command", required=True)

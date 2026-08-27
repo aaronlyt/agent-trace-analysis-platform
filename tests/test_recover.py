@@ -91,10 +91,17 @@ def test_targeted_rerun_needs_env():
 
 
 def test_targeted_rerun_skips_success_trace():
+    """A successful trajectory skips recovery but still lands an explicit
+    artifact (repository-wide contract: downstream must be able to tell
+    "ran and skipped" from "not configured at all"; review 2026-08-27 --
+    it used to be a bare return)."""
     t = ToySandbox().generate("q-trajaudit")
     b = TrajectoryBundle(t)
     TargetedRerunRecoverer().run_one(b, RunContext(env=ToySandbox()))
-    assert not b.has("recover", "targeted_rerun")
+    art = b.get("recover", "targeted_rerun")
+    assert art["status"] == "skipped_success"
+    assert art["recovered"] is False
+    assert not b.reruns
 
 
 def _seed_hypotheses(b, hyps):

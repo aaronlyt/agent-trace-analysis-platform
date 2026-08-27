@@ -96,9 +96,15 @@ def test_all_at_once_emits_hypothesis_contract():
 
 
 def test_all_at_once_skips_success():
+    """Successful trajectories produce no attribution, but the artifact
+    still lands (repository-wide contract: downstream must be able to tell
+    "ran and skipped" from "not configured at all"; review 2026-08-27 --
+    it used to be a bare return)."""
     b, ctx = _bundle("q-trajaudit")
     AllAtOnceAttributor().run_one(b, ctx)
-    assert not b.has("attribute", "all_at_once")
+    art = b.get("attribute", "all_at_once")
+    assert art["status"] == "success_no_attribution"
+    assert art["hypotheses"] == []
 
 
 def test_all_at_once_clamps_bad_step_and_agent():

@@ -1,4 +1,4 @@
-"""atap -- Agent trajectory analysis and error attribution platform (reproducing "Overall Pipeline Architecture and Algorithm Literature").
+"""atap -- Agent Trace Analysis Platform (reproducing "Overall Pipeline Architecture and Algorithm Literature").
 
 Importing this package completes algorithm registration (transformers-style:
 algorithm modules self-register into core.registry at import time; adding an

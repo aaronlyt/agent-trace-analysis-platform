@@ -80,6 +80,9 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         # count)
         self.parse_retries: list[dict] = []
         self.http_requests = 0   # HTTP requests actually issued (including rate-limit/parse-repair retries)
+        # set once an endpoint rejects max_completion_tokens itself: stick to
+        # max_tokens for the rest of the run (see _post_chat)
+        self._legacy_max_tokens = False
 
     # ------------------------------------------------------------------
 
@@ -108,6 +111,55 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         if elapsed < self.request_interval:
             time.sleep(self.request_interval - elapsed)
 
+    def _post_chat(self, payload_messages: list, use_model: str, tag: str):
+        """One chat.completions.create HTTP request. Sends
+        ``max_completion_tokens`` (newer reasoning models -- o-series /
+        gpt-5 -- reject ``max_tokens`` outright); on an endpoint that
+        rejects the parameter itself, falls back to ``max_tokens`` and
+        sticks to it for the rest of the run (older OpenAI-compatible
+        backends)."""
+        self.http_requests += 1
+        # getattr: partially-constructed clients (tests build them via
+        # __new__ and list attributes by hand) must not crash on this flag
+        if not getattr(self, "_legacy_max_tokens", False):
+            try:
+                return self._client.chat.completions.create(
+                    model=use_model,
+                    messages=payload_messages,  # type: ignore[arg-type]
+                    temperature=self.temperature,
+                    max_completion_tokens=self.max_completion_tokens,
+                )
+            except Exception as e:
+                if not self._unsupported_max_completion_param(e):
+                    raise
+                self._legacy_max_tokens = True
+                self.retries.append({
+                    "tag": tag, "attempt": 0, "wait": 0.0,
+                    "error": "endpoint rejected max_completion_tokens, "
+                             "falling back to max_tokens: "
+                             f"{str(e)[:120]}",
+                })
+        return self._client.chat.completions.create(
+            model=use_model,
+            messages=payload_messages,  # type: ignore[arg-type]
+            temperature=self.temperature,
+            max_tokens=self.max_completion_tokens,
+        )
+
+    def _unsupported_max_completion_param(self, e: Exception) -> bool:
+        """Whether the failure is the endpoint rejecting the
+        max_completion_tokens parameter itself: HTTP 400 naming the
+        parameter, or a client-side TypeError from an SDK too old to know
+        the kwarg. Anything else (auth, rate limit, network) is not a
+        parameter problem."""
+        openai = self._openai
+        if isinstance(e, TypeError) and "max_completion_tokens" in str(e):
+            return True
+        return (
+            isinstance(e, openai.BadRequestError)
+            and "max_completion_tokens" in str(e)
+        )
+
     def _create(self, payload_messages: list, use_model: str, tag: str):
         """chat.completions.create with backoff retries (raises LLMError once retries are exhausted).
 
@@ -119,14 +171,8 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         for attempt in range(self.max_retries + 1):
             self._throttle()
             self._last_call_ts = time.time()
-            self.http_requests += 1
             try:
-                resp = self._client.chat.completions.create(
-                    model=use_model,
-                    messages=payload_messages,  # type: ignore[arg-type]
-                    temperature=self.temperature,
-                    max_tokens=self.max_completion_tokens,
-                )
+                resp = self._post_chat(payload_messages, use_model, tag)
             except Exception as e:
                 last_err = e
                 if not self._retryable(e) or attempt == self.max_retries:

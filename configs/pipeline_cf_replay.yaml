@@ -1,0 +1,34 @@
+# L3 counterfactual replay final review (TraceElephant 2604.22708, offline FakeLLM):
+# binary_search proposes candidates -> counterfactual_replay edits each candidate
+# step's message and replays a k=3 window (validated +0.2 / refuted -0.3).
+# Its artifact declares supersedes, so bundle.hypotheses() already returns the
+# reviewed copy in place of the upstream original -- targeted_rerun consumes the
+# merged view directly (no attribution= filter needed). Order inside the stage
+# matters: cf_replay must be listed after its candidate source.
+run_name: offline-cf-replay
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: fake
+
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+  classify:
+    - mast_judge
+    - rule_pack
+  attribute:
+    - binary_search
+    - counterfactual_replay
+  recover:
+    - targeted_rerun

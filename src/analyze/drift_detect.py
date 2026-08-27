@@ -203,6 +203,10 @@ class DriftDetectAnalyzer(Analyzer):
                 **_features(t),
             })
 
+        # corpus-level alias report (what the artifact discloses); the actual
+        # firing dedup below recomputes aliases per compared pair -- global
+        # collinearity neither implies nor is implied by within-pair
+        # collinearity, and the dedup must match the distributions it guards
         aliases = _alias_pairs(rows)
 
         def bucket_agg(items: list[dict]) -> dict[str, Counter | float]:
@@ -276,10 +280,15 @@ class DriftDetectAnalyzer(Analyzer):
                         if psi > psi_alert or max(m_a, m_b) > mismatch_alert:
                             firing.append(feat)
                     firing_indep = list(firing)
-                    for f, g in aliases:
+                    # alias scope = this pair's two groups (ga + gb): two
+                    # features collinear corpus-wide need not be collinear
+                    # inside the compared buckets, and vice versa
+                    deduped: list[list[str]] = []
+                    for f, g in _alias_pairs(ga + gb):
                         # drop the later alias of any pair that fired twice
                         if f in firing_indep and g in firing_indep:
                             firing_indep.remove(g)
+                            deduped.append([f, g])
                     entry = {
                         "family": family,
                         "a": ka,
@@ -294,6 +303,9 @@ class DriftDetectAnalyzer(Analyzer):
                         ),
                         "firing_features": firing,
                         "firing_features_independent": firing_indep,
+                        # aliases actually deduped in THIS pair (scope note:
+                        # per-pair, not corpus-level -- see feature_aliases)
+                        "alias_dedup": deduped,
                         "drift_type": family,
                         "alert": bool(firing),
                     }
@@ -353,7 +365,9 @@ class DriftDetectAnalyzer(Analyzer):
             "min_group_size": min_group_size,
             "feature_aliases": [
                 {"features": [f, g],
-                 "note": "identical trace partitions: one signal measured twice"}
+                 "note": "identical trace partitions corpus-wide: one signal "
+                         "measured twice (per-pair dedup is recomputed on the "
+                         "compared groups and recorded as alias_dedup)"}
                 for f, g in aliases
             ],
             "cost": "free",

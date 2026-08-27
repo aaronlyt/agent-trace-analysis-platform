@@ -177,6 +177,62 @@ def test_cf_replay_degrades_explicitly():
         CounterfactualReplayAttributor().run_one(b2, ctx2)
 
 
+def test_cf_replay_supersedes_upstream_in_merged_hypotheses():
+    """The reviewed copy replaces the upstream original in
+    bundle.hypotheses() (same agent+step). Without supersede semantics the
+    refuted copy (confidence -0.3) coexists with its un-reviewed original
+    and every downstream max(confidence) selection keeps the original --
+    the L3 review would have no effect at all (review 2026-08-27 P1)."""
+    sb = ToySandbox()
+    b, ctx = _bundle(sb.generate("q-who-when", "info_withholding"), env=sb)
+    create("attribute", "all_at_once").run_one(b, ctx)
+    upstream = b.hypotheses()
+    assert len(upstream) == 1
+    CounterfactualReplayAttributor().run_one(b, ctx)
+    merged = b.hypotheses()
+    # exactly one hypothesis per reviewed (agent, step) -- not two
+    assert len(merged) == 1
+    assert merged[0].source == "counterfactual_replay"
+    assert merged[0].root_cause.startswith("[L3 counterfactual replay validated]")
+    assert merged[0].confidence == min(upstream[0].confidence + 0.2, 1.0)
+    # supersede is read-time only: the upstream artifact itself stays intact
+    art_orig = b.get("attribute", "all_at_once")["hypotheses"][0]
+    assert art_orig["step"] == upstream[0].step
+    assert art_orig["confidence"] == upstream[0].confidence
+
+
+def test_cf_replay_refuted_candidate_no_longer_wins_t_star():
+    """End-to-end supersede effect: a symptom-step candidate that upstream
+    ranks highest must lose t* selection once cf_replay refutes it
+    (confidence -0.3), so targeted_rerun re-rolls out from the validated
+    GT-step candidate instead of the refuted symptom step."""
+    sb = ToySandbox()
+    b, ctx = _bundle(sb.generate("q-who-when", "info_withholding"), env=sb)
+    t = b.trajectory
+    gt = t.meta["injected_fault"]
+    symptom = (gt["step"] + 1) % len(t.events)
+    b.put("attribute", "upstream_probe", {"hypotheses": [
+        Hypothesis(agent=gt["agent"], step=symptom,
+                   root_cause="symptom step (pseudo-causal)",
+                   fix_suggestion="re-examine this step",
+                   confidence=0.95).to_dict(),
+        Hypothesis(agent=gt["agent"], step=gt["step"],
+                   root_cause="withholds the retrieved information",
+                   fix_suggestion="faithfully report the retrieved documents "
+                                  "and avoid info_withholding",
+                   confidence=0.9).to_dict(),
+    ]})
+    CounterfactualReplayAttributor().run_one(b, ctx)
+    verdicts = {v["candidate"]["step"]: v["verdict"]
+                for v in b.get("attribute", "counterfactual_replay")["verdicts"]}
+    assert verdicts[symptom] == "refuted"
+    assert verdicts[gt["step"]] == "validated"
+    create("recover", "targeted_rerun").run_one(b, ctx)
+    art = b.get("recover", "targeted_rerun")
+    assert art["t_star"] == gt["step"]
+    assert art["recovered"]
+
+
 # ------------------------------------------------------------------ dover --
 
 
@@ -193,7 +249,13 @@ def test_dover_recovers_six_of_six_with_gt_mistake_steps():
         )
         assert a["verdict"] == "Validated"
         assert art["recovered"]
-        assert len(b.reruns) == 3                # x3 replays per intervention
+        # x3 replays per intervention, but only the representative (the last
+        # repeat) enters bundle.reruns: report.n_reruns counts recovery
+        # attempts, not deterministic repeats -- all repeats stay recorded in
+        # the attempt (review 2026-08-27 P2)
+        assert len(b.reruns) == 1
+        assert len(a["replay_trace_ids"]) == 3
+        assert b.reruns[-1].trace_id == a["replay_trace_ids"][-1]
         assert b.reruns[0].meta["replay_mode"] == "message_intervention"
         assert art["milestones"] and len(art["milestones"]) == 3
         # in-place message replacement semantics (vs targeted_rerun's appended

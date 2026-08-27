@@ -371,7 +371,9 @@ class ActionSignatureRepresenter(Representer):
         if anchor is not None and action_class in ("FILE_READ", "SEARCH"):
             return "JUSTIFIED" if _touches_anchor(action_class, target, res, anchor) else "OFF-ANCHOR"
         if action_class == "FILE_READ":
-            return "JUSTIFIED" if anchor is None else "OFF-ANCHOR"
+            # unreachable with an anchor set (handled above): an anchor-less
+            # read cannot be checked against anything, so it is justified
+            return "JUSTIFIED"
         return "RECORDED"
 
     @staticmethod

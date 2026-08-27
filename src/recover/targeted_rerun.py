@@ -55,6 +55,13 @@ class TargetedRerunRecoverer(Recoverer):
 
     def run_one(self, bundle, ctx) -> None:
         if bundle.succeeded:
+            # nothing was broken, so nothing was recovered (same semantics as
+            # dover's skipped_success); the artifact still lands so downstream
+            # can tell "ran and skipped" from "not configured at all"
+            bundle.put(
+                "recover", self.name,
+                {"status": "skipped_success", "recovered": False},
+            )
             return
         hyps = bundle.hypotheses()
         attribution = self.param("attribution", None)

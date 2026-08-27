@@ -74,19 +74,44 @@ class TrajectoryBundle:
         here with the name of the artifact (algorithm) that carried it, so
         after cross-algorithm merging each hypothesis stays traceable to its
         producing algorithm (downstream consumers filter by ``source``).
+
+        Supersede semantics: an artifact that declares ``"supersedes": true``
+        (L3 final-review algorithms, e.g. counterfactual_replay) has each of
+        its hypotheses replace the same-(agent, step) hypothesis of every
+        other artifact. Without this the reviewed copy and its un-reviewed
+        original coexist, and every downstream ``max(confidence)`` selection
+        (targeted_rerun's t*, compare's hit evaluation) picks between them:
+        a refuted candidate (confidence −0.3) would keep losing to its own
+        original and the review would change nothing.
         """
-        out: list[Hypothesis] = []
-        for name, art in self.artifacts.get("attribute", {}).items():
+        arts = self.artifacts.get("attribute", {})
+        items_by_name: dict[str, list[Hypothesis]] = {}
+        for name, art in arts.items():
             items = art.get("hypotheses") if isinstance(art, dict) else None
             if items is None and isinstance(art, dict) and "hypothesis" in art:
                 items = [art["hypothesis"]]
-            if items is None:
-                items = []
-            for h in items:
-                hyp = Hypothesis.from_dict(h) if isinstance(h, dict) else h
-                if hyp.source == "":
-                    hyp.source = name
-                out.append(hyp)
+            items_by_name[name] = [
+                Hypothesis.from_dict(h) if isinstance(h, dict) else h
+                for h in items or []
+            ]
+        superseding = {
+            name
+            for name, art in arts.items()
+            if isinstance(art, dict) and art.get("supersedes")
+        }
+        reviewed = {
+            (h.agent, h.step)
+            for name in superseding
+            for h in items_by_name[name]
+        }
+        out: list[Hypothesis] = []
+        for name, hyps in items_by_name.items():
+            for h in hyps:
+                if name not in superseding and (h.agent, h.step) in reviewed:
+                    continue
+                if h.source == "":
+                    h.source = name
+                out.append(h)
         return out
 
     # -- report ----------------------------------------------------------------

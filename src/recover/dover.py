@@ -383,8 +383,13 @@ class DoVerRecoverer(Recoverer):
                 t, int(failure.mistake_step_index), itv.replacement_text,
                 n_repeats=n_repeats,
             )
-            for r in runs:
-                bundle.reruns.append(r)
+            # only the representative replay (the last repeat -- the same one
+            # the recovered check below reads) enters bundle.reruns: report
+            # .n_reruns counts recovery attempts, and n_repeats deterministic
+            # replays of one intervention would scale the DoVer row's rerun
+            # count by n_repeats in cross-algorithm comparisons; every repeat
+            # stays recorded in attempts (replay_trace_ids + replay_success)
+            bundle.reruns.append(runs[-1])
             n_ok = sum(1 for r in runs if r.outcome.success)
             removed = bool(runs[0].meta.get("fault_removed"))
 
@@ -422,6 +427,7 @@ class DoVerRecoverer(Recoverer):
                     "replacement": itv.replacement_text[:120],
                 },
                 "replay_success": n_ok,
+                "replay_trace_ids": [r.trace_id for r in runs],
                 "fault_removed": removed,
                 "verdict": label.label,
                 "verdict_reason": label.reason[:160],

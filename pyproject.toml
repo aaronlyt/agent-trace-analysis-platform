@@ -5,8 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "atap"
 version = "0.1.0"
-description = "Agent Trajectory Analysis Platform — pluggable pipeline for trajectory representation, analysis, error classification, failure attribution and recovery"
+description = "Agent Trace Analysis Platform — pluggable pipeline for trace representation, analysis, error classification, failure attribution and recovery"
 requires-python = ">=3.10"
+license = {text = "MIT"}
 dependencies = ["pyyaml>=6.0", "pydantic>=2.0"]
 
 [project.optional-dependencies]
