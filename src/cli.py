@@ -33,6 +33,7 @@ def _cmd_list(_args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     from atap.core.config import load_config
+    from atap.io import build_store
     from atap.runtime import run_config
 
     cfg = load_config(args.config)
@@ -43,7 +44,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"  round{i}: traces={r.n_traces} failures={r.n_failures} "
             f"attributed={r.n_attributed} reruns={r.n_reruns}(ok={r.n_rerun_success})"
         )
-    print(f"artifacts -> {args.out}/artifacts")
+    # actual artifact location (cfg.store may redirect it away from <out>/artifacts)
+    print(f"artifacts -> {build_store(cfg.store, args.out).dir}")
     return 0
 
 
@@ -174,13 +176,11 @@ def _cmd_export(args: argparse.Namespace) -> int:
             "spans present) via represent/canonical_events before export",
             n_flattened,
         )
+    # args.format is argparse-constrained to langfuse|otel, no dead branch here
     if args.format == "langfuse":
         payload = export_langfuse(traces)
-    elif args.format == "otel":
-        payload = export_otel(traces)
     else:
-        log.error("unknown export format %r (langfuse | otel)", args.format)
-        return 1
+        payload = export_otel(traces)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=1),

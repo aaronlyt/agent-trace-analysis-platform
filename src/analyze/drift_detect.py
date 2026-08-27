@@ -60,7 +60,10 @@ from atap.core.registry import register
 _LENGTH_BINS = ((0, 9), (10, 13), (14, 17), (18, float("inf")))
 
 # per-trajectory categorical features whose histograms feed the PSI
-# comparisons; bijective pairs among these are aliases (one signal)
+# comparisons; bijective pairs among these are aliases (one signal).
+# task_id is included for row building and alias detection only -- the data
+# family's compared feature is emitted as task_composition (bucket_agg's
+# task_id counter), not under this name.
 _CATEGORICAL_FEATURES = ("length_bin", "failure", "task_id")
 
 
@@ -130,9 +133,6 @@ def _features(t) -> dict[str, Any]:
         "n_repeat_calls": n_repeat,
         "task_id": str(t.meta.get("task_id") or "unknown"),
     }
-
-
-_BEHAVIORAL_DIMS = ("kind_hist", "action_hist", "length_bin", "failure", "repeat")
 
 
 def _alias_pairs(rows: list[dict]) -> list[tuple[str, str]]:

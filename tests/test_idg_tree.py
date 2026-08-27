@@ -8,10 +8,12 @@ import pytest
 from atap.core.bundle import TrajectoryBundle
 from atap.core.context import RunContext
 from atap.core.registry import create
+from atap.core.schema import Outcome, Trajectory
+from atap.represent.hcg import HCGRepresenter
 from atap.represent.hierarchy_tree import HierarchyTreeRepresenter
 from atap.represent.idg import IDGRepresenter
 from atap.sandbox import ToySandbox
-from tests.helpers import failure_trace_ungrounded, success_trace
+from tests.helpers import _ev, failure_trace_ungrounded, success_trace
 
 
 def _bundle(trace):
@@ -177,3 +179,73 @@ def test_tree_deterministic_and_configurable():
     HierarchyTreeRepresenter().run_one(b, ctx)
     art3 = b.get("represent", "hierarchy_tree")
     assert art3["nodes"] == art1["nodes"]        # determinism
+
+
+def test_hcg_step_edges_time_guard_and_dedup():
+    """step_edges are built on the same basis as idg usage edges: a forward
+    reference (pointing at a later event) yields no backward data-flow edge,
+    and a duplicated ref id yields exactly one edge."""
+    events = [
+        _ev(0, "TASK_START", "env", payload={"task": "t"}),
+        # forward ref: e001 references the later e002
+        _ev(1, "LLM_CALL", "planner", phase="plan",
+            payload={"content": "p"}, refs=["e002"]),
+        # duplicate ref: e002 references e001 twice
+        _ev(2, "HANDOFF", "planner", phase="plan",
+            payload={"to": "searcher"}, refs=["e001", "e001"]),
+    ]
+    t = Trajectory("hcg-fwd", "t", events=events, outcome=Outcome(success=False))
+    b, ctx = _bundle(t)
+    HCGRepresenter().run_one(b, ctx)
+    art = b.get("represent", "hcg")
+    assert art["edges"]["step"] == [{"src": "e001", "dst": "e002"}]
+    assert art["stats"]["n_step_edges"] == 1
+
+
+def test_idg_counts_dropped_forward_refs():
+    """A forward reference (target event not earlier than the referencing
+    event) is dropped from the graph and counted in
+    stats.dropped_forward_refs instead of silently vanishing."""
+    events = [
+        _ev(0, "TASK_START", "env", payload={"task": "t"}),
+        _ev(1, "TOOL_CALL", "searcher", action="search",
+            payload={"query": "q"}, refs=["e002"]),        # forward ref
+        _ev(2, "TOOL_RESULT", "env", action="search", refs=["e001"],
+            payload={"content": "docs [d1]"}),
+        _ev(3, "TOOL_CALL", "reporter", action="submit",
+            payload={"answer": "a"}, refs=["e002", "e002"]),  # duplicate ref
+    ]
+    t = Trajectory("idg-fwd", "t", events=events, outcome=Outcome(success=False))
+    b, ctx = _bundle(t)
+    IDGRepresenter().run_one(b, ctx)
+    art = b.get("represent", "idg")
+    assert art["stats"]["dropped_forward_refs"] == 1
+    pairs = {(e["src"], e["dst"]) for e in art["edges"]}
+    assert ("e001", "e002") in pairs       # result -> call (legal backward ref)
+    assert ("e002", "e003") in pairs       # duplicate ref deduped to one edge
+    assert ("e002", "e001") not in pairs   # forward ref produced no edge
+
+
+def test_tree_unknown_stage_marker_and_joined_outcomes():
+    """A step outside every stage interval (no R0 phase) renders
+    '== stage: ? ==' (previously '== stage: None =='); several environment
+    observations attached to one step join with ' | ' (previously only the
+    first survived)."""
+    events = [
+        _ev(0, "TASK_START", "env"),
+        _ev(1, "LLM_CALL", "planner", phase="plan", payload={"content": "plan"}),
+        _ev(2, "LLM_CALL", "planner", payload={"content": "think"}),  # mid-trace, no phase
+        _ev(3, "TOOL_RESULT", "env", refs=["e002"], payload={"content": "obs one"}),
+        _ev(4, "VERIFIER", "verifier", refs=["e002"], payload={"content": "obs two"}),
+        _ev(5, "TASK_END", "env"),
+    ]
+    t = Trajectory("tree-nophase", "t", events=events, outcome=Outcome(success=False))
+    b, ctx = _bundle(t)
+    HierarchyTreeRepresenter().run_one(b, ctx)
+    art = b.get("represent", "hierarchy_tree")
+    md = art["tree_md"]
+    assert "== stage: plan ==" in md
+    assert "== stage: ? ==" in md
+    assert "None ==" not in md
+    by_step = {n["step"]: n for n in art["nodes"]}
+    assert "obs one | obs two" in by_step["e002"]["summary"]

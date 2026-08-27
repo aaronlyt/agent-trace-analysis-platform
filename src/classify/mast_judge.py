@@ -85,8 +85,8 @@ _SYSTEM = (
 _FEW_SHOT = (
     "Example: the editor receives an ambiguous change request at step 6, "
     "never asks for clarification, and at step 10 rewrites the wrong section "
-    "—— the decisive error is acting on ambiguous input without "
-    "clarification —— output "
+    "-- the decisive error is acting on ambiguous input without "
+    "clarification -- output "
     "{\"labels\": [{\"code\": \"FM-2.2\", \"reason\": \"proceeded on ambiguous input without asking for clarification\", \"step\": 10}]}."
 )
 _NOVEL_INSTRUCTION = (
@@ -156,7 +156,7 @@ class MastJudgeClassifier(Classifier):
     def _definitions_block(self) -> str:
         lines = [mast_definitions_block()]
         for code, m in sorted(self.extra_modes.items()):
-            lines.append(f"{code}{_EXTRA_TAG}{m['name']} —— {m['definition']}")
+            lines.append(f"{code}{_EXTRA_TAG}{m['name']} -- {m['definition']}")
         return "\n".join(lines)
 
     def run_one(self, bundle, ctx) -> None:

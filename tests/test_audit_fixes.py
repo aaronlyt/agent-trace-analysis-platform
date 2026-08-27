@@ -423,3 +423,33 @@ def test_feedback_injection_no_reflect_after_final_round():
     # after the final round fails, no more feedback is generated: one
     # injected feedback per round, no extra final entry
     assert len(art["feedback_rounds"]) == 3
+
+
+# ------------------------------------------------- hypothesis provenance --
+
+def test_hypotheses_tagged_with_source_algorithm():
+    """Provenance basis for cross-algorithm confidence arbitration:
+    bundle.hypotheses() tags each Hypothesis with the name of the artifact
+    (algorithm) that carried it when the stored dict carries no source, so
+    hypotheses stay distinguishable after cross-algorithm merging; an
+    explicit source survives the to_dict/from_dict round-trip, and legacy
+    dicts without the key deserialize to ''."""
+    from atap.attribute.rg_ug import RGUGAttributor
+    from atap.core.schema import Hypothesis
+
+    b, ctx = _sandbox_bundle("q-trajaudit", "malformed_tool_call")
+    RGUGAttributor().run_one(b, ctx)
+    b.put("attribute", "seed", {"hypotheses": [
+        Hypothesis(agent="searcher", step=3, root_cause="seed cause",
+                   confidence=0.4).to_dict()
+    ]})
+    hyps = {h.source: h for h in b.hypotheses()}
+    assert set(hyps) == {"rg_ug", "seed"}          # distinguishable origins
+    assert hyps["rg_ug"].root_cause_code == "retrieval_gap"
+    assert hyps["seed"].root_cause == "seed cause"
+    # explicit source round-trips; legacy dicts default to ""
+    h = Hypothesis(agent="a", step=1, root_cause="r", source="chief")
+    assert Hypothesis.from_dict(h.to_dict()).source == "chief"
+    assert Hypothesis.from_dict(
+        {"agent": "a", "step": 1, "root_cause": "r"}
+    ).source == ""

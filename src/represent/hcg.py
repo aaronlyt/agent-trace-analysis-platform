@@ -33,7 +33,9 @@ E_step needs its own named declaration (not covered by the blanket
 LLM select only **"meaningful data passing"** step edges (a filtered subset;
 zero/one/multiple edges per step are all allowed), while this implementation
 takes the **entire set** of R0 refs -- an unfiltered superset that treats
-every reference edge as meaningful [adaptation: E_step superset]. None of
+every reference edge as meaningful [adaptation: E_step superset], with only
+the represent/idg-basis mechanics applied (time-order guard: forward refs
+dropped; per-pair deduplication). None of
 these edges is pruned afterwards (see the consumption note below).
 Phi pattern annotation is left as a placeholder (the original uses an LLM to
 judge Bias->Anomaly): ``phi_patterns`` stays empty and **nothing currently
@@ -169,10 +171,21 @@ class HCGRepresenter(Representer):
                     "src": ev.agent, "dst": to or "?",
                     "subtask": sid, "step": ev.index,
                 })
-        step_edges = [
-            {"src": src, "dst": ev.id}
-            for ev in events for src in ev.refs
-        ]
+        # Step edges reuse R0 refs on the same basis as represent/idg: the
+        # time-order guard (index[src] < index[dst]) plus deduplication --
+        # a forward-pointing ref (if a collection layer ever emits one) is
+        # dropped instead of becoming a backward data-flow edge, and a
+        # repeated ref id yields one edge
+        index_by_id = {ev.id: ev.index for ev in events}
+        step_edges: list[dict[str, Any]] = []
+        seen_step: set[tuple[str, str]] = set()
+        for ev in events:
+            for ref in ev.refs:
+                if ref in index_by_id and index_by_id[ref] < ev.index:
+                    key = (ref, ev.id)
+                    if key not in seen_step:
+                        seen_step.add(key)
+                        step_edges.append({"src": ref, "dst": ev.id})
 
         bundle.put(
             "represent",

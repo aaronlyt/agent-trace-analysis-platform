@@ -58,16 +58,30 @@ class CountingLLM:
 
 
 def evaluate_against_gt(bundles) -> dict[str, Any]:
-    """Hit statistics against the injected-fault GT (same criteria as atap demo)."""
+    """Hit statistics against the injected-fault GT (same criteria as atap demo).
+
+    ``top`` selection ties break on the earliest step ``(confidence, -step)``
+    -- the same rule as the recover consumers, so evaluation and recovery
+    act on one hypothesis. ``per_fault`` holds per-trace details keyed by
+    trace_id (the record carries the fault ``kind``); ``per_kind``
+    aggregates hits/total by fault kind and is what backs per-fault-kind
+    conclusions (multiple traces may share one kind).
+    """
     n_failed = step_hits = agent_hits = code_hits = 0
     recovered = closed_improved = 0
     per_fault: dict[str, dict[str, Any]] = {}
+    per_kind: dict[str, dict[str, int]] = {}
     for b in bundles:
         gt = b.trajectory.meta.get("injected_fault")
         if not gt:
             continue
         n_failed += 1
         hyps = b.hypotheses()
+        # eval keeps the algorithm's own ranking: max() returns the first
+        # maximal element, i.e. the artifact's primary hypothesis (sbfl emits
+        # a fixed prior confidence, so earliest-step tie-breaking here would
+        # discard its suspiciousness ordering). The recovery side selects
+        # (confidence, -step) deliberately -- the two scopes differ by design.
         top = max(hyps, key=lambda h: h.confidence) if hyps else None
         labels: list[dict] = []
         for name in ("mast_judge", "rule_pack"):
@@ -92,7 +106,8 @@ def evaluate_against_gt(bundles) -> dict[str, Any]:
         recovered += rec
         loop = b.get("recover", "closed_loop", {})
         closed_improved += bool(loop.get("verified_improved"))
-        per_fault[gt["kind"]] = {
+        per_fault[b.trace_id] = {
+            "kind": gt["kind"],
             "gt_step": gt["step"],
             "pred_step": top.step if top else None,
             "pred_agent": top.agent if top else None,
@@ -101,6 +116,16 @@ def evaluate_against_gt(bundles) -> dict[str, Any]:
             "hit_code": hit_code,
             "recovered": rec,
         }
+        agg = per_kind.setdefault(
+            gt["kind"],
+            {"total": 0, "step_hits": 0, "agent_hits": 0, "code_hits": 0,
+             "recovered": 0},
+        )
+        agg["total"] += 1
+        agg["step_hits"] += hit_step
+        agg["agent_hits"] += hit_agent
+        agg["code_hits"] += hit_code
+        agg["recovered"] += rec
     return {
         "n_failed": n_failed,
         "step_hits": step_hits,
@@ -109,6 +134,7 @@ def evaluate_against_gt(bundles) -> dict[str, Any]:
         "recovered": recovered,
         "closed_loop_improved": closed_improved,
         "per_fault": per_fault,
+        "per_kind": per_kind,
     }
 
 
@@ -140,7 +166,14 @@ def run_compare(
         log.info("compare run: %s -> %s", path, cfg.run_name)
         inner = build_llm(cfg.llm) if cfg.llm else None
         wrapper = CountingLLM(inner) if inner is not None else None
-        run_dir = out_dir / (cfg.run_name or Path(path).stem)
+        # run_name defaults to "run" and is never empty, so cfg.run_name is
+        # always the directory name (no path-stem fallback needed)
+        run_dir = out_dir / cfg.run_name
+        if run_dir.exists():
+            raise ValueError(
+                f"run directory already exists: {run_dir} "
+                f"(previous results would be overwritten; use a distinct run_name)"
+            )
         bundles, reports = run_config(cfg, run_dir, llm=wrapper)
         ev = evaluate_against_gt(bundles)
         by_tag: dict[str, int] = {}

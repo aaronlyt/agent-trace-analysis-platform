@@ -65,8 +65,14 @@ def run_demo(seed: int = 7, out: str = "runs/demo") -> None:
             verdict = b.get("analyze", "judge_eval", {})
             print(f"{head}  judge_score={verdict.get('score', '-')}  ({t.outcome.note[:44]})")
             continue
+        if not gt:
+            # failure without injected-fault GT: nothing to compare against
+            # (same guard as compare.evaluate_against_gt)
+            continue
         n_failed += 1
         hyps = b.hypotheses()
+        # keep the algorithm's own ranking (see compare.evaluate_against_gt);
+        # the recovery side's (confidence, -step) tie-break is a separate scope
         top = max(hyps, key=lambda h: h.confidence) if hyps else None
         labels = b.get("classify", "mast_judge", {}).get("labels", [])
         rec = b.get("recover", "targeted_rerun", {})

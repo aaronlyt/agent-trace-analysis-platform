@@ -867,10 +867,11 @@ def _dover_milestone_json(messages: list[ChatMessage]) -> str:
 
 def _dover_classify_json(messages: list[ChatMessage]) -> str:
     """Pseudo-implementation of outcome classification: deterministic rules --
-    at least 2/3 successes = Validated; fault removed but not majority
-    successful = Partially; faithfully executed (intervention_applied) yet
-    no progress = Refuted; otherwise Inconclusive (DoVer Section 4.2
-    decision rules)."""
+    a strict majority of successful replays (2*n_ok > n_repeats; for the
+    default n=3 this is the paper's ">= 2/3") = Validated; fault removed but
+    not majority successful = Partially; faithfully executed
+    (intervention_applied) yet no progress = Refuted; otherwise Inconclusive
+    (DoVer Section 4.2 decision rules)."""
     user = str(messages[-1].get("content", ""))
     m_runs = re.search(r"replay outcomes:\s*\[([^\]]*)\]", user)
     outcomes = (
@@ -880,9 +881,13 @@ def _dover_classify_json(messages: list[ChatMessage]) -> str:
     removed = "fault removed by edit: True" in user
     if outcomes:
         n_ok = sum(outcomes)
-        majority = n_ok * 2 >= len(outcomes) and n_ok >= 2
+        majority = 2 * n_ok > len(outcomes)
         if majority:
-            label, reason = "Validated", "at least 2/3 replays succeeded"
+            label, reason = (
+                "Validated",
+                f"a strict majority of replays succeeded "
+                f"({n_ok}/{len(outcomes)})",
+            )
         elif removed:
             label, reason = "Partially", "the edit removed the fault but majority success was not reached"
         else:

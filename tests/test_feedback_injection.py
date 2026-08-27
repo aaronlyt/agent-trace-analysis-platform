@@ -8,6 +8,7 @@ import pytest
 from atap.core.bundle import TrajectoryBundle
 from atap.core.context import RunContext
 from atap.core.registry import create
+from atap.core.schema import Hypothesis
 from atap.llm.fake_client import FakeLLMClient
 from atap.recover.feedback_injection import FeedbackInjectionRecoverer
 from atap.sandbox import ToySandbox
@@ -115,6 +116,45 @@ def test_no_hypothesis_skips_explicitly():
     FeedbackInjectionRecoverer().run_one(b, ctx)
     art = b.get("recover", "feedback_injection")
     assert art["status"] == "skipped_no_hypothesis" and not art["recovered"]
+
+
+def test_feedback_injection_filters_hypotheses_by_attribution_source():
+    """Param attribution= declares which attribution algorithm's Hypotheses
+    the recoverer consumes (confidence has no global scale across
+    attribution algorithms); a filter that matches nothing degrades
+    explicitly instead of silently falling back to the unfiltered top."""
+    b, ctx = _bundle("q-trajaudit", "step_repetition")
+    keep = Hypothesis(agent="searcher", step=4, root_cause="r1",
+                       fix_suggestion="Avoid step_repetition: do not repeat "
+                                      "the same search.",
+                       confidence=0.6)
+    drop = Hypothesis(agent="searcher", step=1, root_cause="r2",
+                      fix_suggestion="vague", confidence=0.99)
+    try:
+        keep.source = "algo_keep"
+        drop.source = "algo_drop"
+    except AttributeError:  # pragma: no cover -- future slotted Hypothesis
+        pytest.skip("Hypothesis does not accept a source attribute yet")
+    b.artifacts.setdefault("attribute", {})["seed"] = {
+        "hypotheses": [keep, drop]
+    }
+
+    FeedbackInjectionRecoverer(attribution="algo_keep").run_one(b, ctx)
+    art = b.get("recover", "feedback_injection")
+    assert art["recovered"] is True
+    assert art["seed_hypothesis"]["step"] == keep.step
+    assert art["attribution"] == "algo_keep"
+
+    b2, ctx2 = _bundle("q-trajaudit", "step_repetition")
+    b2.artifacts.setdefault("attribute", {})["seed"] = {
+        "hypotheses": [keep, drop]
+    }
+    FeedbackInjectionRecoverer(attribution="algo_missing").run_one(b2, ctx2)
+    art2 = b2.get("recover", "feedback_injection")
+    assert art2["status"] == "skipped_no_hypothesis"
+    assert art2["recovered"] is False
+    assert "algo_missing" in art2["note"]
+    assert b2.reruns == []
 
 
 def test_no_env_degrades():

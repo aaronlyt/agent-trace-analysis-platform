@@ -24,7 +24,12 @@ Differences from the paper:
   produces rerun trajectories without auto-modifying the system.
 
 Consumes the unified attribution contract (top Hypothesis, ordered by
-(confidence, -step) same as targeted_rerun); each round re-solves from the
+(confidence, -step) same as targeted_rerun); param ``attribution``
+[inference]: when several attribution algorithms are configured in the same
+pipeline, ``confidence`` has no global scale across algorithms, so an
+explicit ``attribution=<algorithm name>`` declares which algorithm's
+Hypotheses (matched against ``Hypothesis.source``) this recoverer consumes
+(unset = consume all); each round re-solves from the
 **original trajectory's** fault state (rerun trajectory meta has
 injected_fault stripped -- passing it along the chain would yield spurious
 success; see the sandbox.resolve convention).
@@ -63,11 +68,25 @@ class FeedbackInjectionRecoverer(Recoverer):
         if bundle.succeeded:
             return
         hyps = bundle.hypotheses()
+        attribution = self.param("attribution", None)
+        if attribution is not None:
+            # [inference] confidence has no global scale when multiple
+            # attribution algorithms are configured together: an explicit
+            # ``attribution`` param declares which algorithm's output this
+            # recoverer consumes (Hypothesis.source; defensive getattr --
+            # the field may be absent on older Hypothesis payloads)
+            hyps = [h for h in hyps if getattr(h, "source", "") == attribution]
         if not hyps:
+            note = (
+                "failed trajectory has no attribution output: recovery must "
+                "consume attribution (broken-link warning in literature §7)"
+            )
+            if attribution is not None:
+                note += f" (attribution filter: no hypothesis with source={attribution!r})"
             bundle.put(
                 "recover", self.name,
                 {"status": "skipped_no_hypothesis", "recovered": False,
-                 "note": "failed trajectory has no attribution output: recovery must consume attribution (broken-link warning in literature §7)"},
+                 "attribution": attribution, "note": note},
             )
             return
         env = getattr(ctx, "env", None)
@@ -118,6 +137,7 @@ class FeedbackInjectionRecoverer(Recoverer):
                 "status": "done",
                 "origin": bundle.trace_id,
                 "mode": "full_reresolve",
+                "attribution": attribution,
                 "seed_hypothesis": {
                     "agent": top.agent,
                     "step": top.step,

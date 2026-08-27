@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from atap.core.schema import Trajectory
     from atap.io.base import ArtifactStore
+    from atap.llm.base import LLMClient
 
 
 @runtime_checkable
@@ -44,11 +45,8 @@ class ReplayEnvironment(Protocol):
 class RunContext:
     """Shared context for one pipeline run."""
 
-    llm: object | None = None                 # LLMClient protocol (llm/base.py)
+    llm: "LLMClient | None" = None            # LLMClient protocol (llm/base.py)
     store: "ArtifactStore | None" = None      # artifact persistence
     env: ReplayEnvironment | None = None      # replay environment (used by recover)
     rng: random.Random = field(default_factory=random.Random)
     run_dir: str = ""                         # output directory of this run (for reports)
-    # closed-loop collection: trace_ids of new trajectories produced by recover
-    # are archived during pipeline orchestration
-    closed_loop_rounds: int = 0

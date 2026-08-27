@@ -209,3 +209,119 @@ def test_touches_anchor_word_boundary():
     # FILE_READ stays an exact-target membership test (no text matching)
     assert _touches_anchor("FILE_READ", "d1", None, {"d1"})
     assert not _touches_anchor("FILE_READ", "d10", None, {"d1"})
+
+
+# ------------------------------------------------ regression: None content --
+
+def test_submit_effect_tolerates_none_verifier_content():
+    """Regression: a VERIFIER observation with payload content=None used to
+    crash _effect (None.startswith); the str() coercion (same basis as the
+    passed-flag and error-observation checks) degrades it to FAILED."""
+    b, _ = _bundle("q-trajaudit", "step_repetition")
+    for ev in b.trajectory.events:
+        if ev.kind == "VERIFIER":
+            ev.payload["content"] = None
+    ActionSignatureRepresenter().run_one(b, ctx=RunContext())
+    m = _sig_map(b)
+    submit_idx = next(
+        e.index for e in b.trajectory.events
+        if e.kind == "TOOL_CALL" and e.action == "submit"
+    )
+    assert m[submit_idx]["action_class"] == "COMMAND"
+    assert m[submit_idx]["effect"] == "FAILED"    # None content is not "passed"
+
+
+# ------------------------------------------- regression: FAILED read anchor --
+
+def _spliced_failed_read(b, doc_id: str):
+    """Append a read of `doc_id` whose observation is an error (FAILED)."""
+    from atap.core.schema import TraceEvent
+
+    evs = b.trajectory.events
+    n = len(evs)
+    call = TraceEvent(
+        id=f"e{n:03d}", ts=float(n), kind="TOOL_CALL", agent="searcher",
+        action="read_doc", payload={"doc_id": doc_id}, refs=[],
+        phase="search", index=n,
+    )
+    res = TraceEvent(
+        id=f"e{n + 1:03d}", ts=float(n + 1), kind="TOOL_RESULT", agent="env",
+        action="read_doc", refs=[call.id], phase="search",
+        payload={"content": f"error: document {doc_id} unreadable"}, index=n + 1,
+    )
+    evs.extend([call, res])
+
+
+def test_failed_reads_never_enter_anchor_set():
+    """A successful trajectory's FAILED read delivers no content: the read
+    target must not enter the anchor set (previously it did, marking that
+    read OFF-ANCHOR-free in other trajectories)."""
+    sb = ToySandbox()
+    ok = TrajectoryBundle(sb.generate("q-trajaudit", None, trace_id="q-x--ok0"))
+    fail = TrajectoryBundle(sb.generate(
+        "q-trajaudit", "ungrounded_citation", trace_id="q-x--f1"))
+    ctx = RunContext()
+    for b in (ok, fail):
+        create("represent", "canonical_events").run_one(b, ctx)
+    # AFTER flattening (sandbox traces carry raw spans until canonical_events):
+    # the success reference attempts an extra read of d2, and it FAILS
+    _spliced_failed_read(ok, "d2")
+    # the failing trajectory reads d2 successfully instead of d1
+    for ev in fail.trajectory.events:
+        if ev.kind == "TOOL_CALL" and ev.action == "read_doc":
+            ev.payload["doc_id"] = "d2"
+    ActionSignatureRepresenter().run_corpus([ok, fail], ctx)
+    art = fail.get("represent", "action_signature")
+    assert art["anchor"]["docs"] == ["d1"]         # d2 (failed read) excluded
+    m = _sig_map(fail)
+    read_idx = next(
+        e.index for e in fail.trajectory.events
+        if e.kind == "TOOL_CALL" and e.action == "read_doc"
+    )
+    assert m[read_idx]["action_class"] == "FILE_READ"
+    assert m[read_idx]["effect"] == "OFF-ANCHOR"   # d2 is not an anchor
+
+
+def test_milestones_ignore_failed_anchor_reads():
+    """A FAILED read of an anchor document does not count as an anchor read
+    (M1/M3): the read delivered no content."""
+    sigs = [
+        {"index": 1, "action_class": "FILE_READ", "target": "d1",
+         "effect": "FAILED"},                      # read attempt failed
+        {"index": 3, "action_class": "FILE_READ", "target": "d1",
+         "effect": "JUSTIFIED"},                   # successful read later
+    ]
+    ms = ActionSignatureRepresenter._milestones(sigs, {"d1"})
+    assert ms["M1_first_anchor_read"]["step"] == 3   # not the failed read at 1
+
+
+# ------------------------------------------ regression: empty anchor set --
+
+def test_empty_anchor_degrades_instead_of_poisoning():
+    """A success reference that read no document at all must degrade to
+    anchor=None with an explicit note: an empty anchor set would mark every
+    read OFF-ANCHOR and make M3 vacuously false."""
+    sb = ToySandbox()
+    ok = TrajectoryBundle(sb.generate("q-trajaudit", None, trace_id="q-e--ok0"))
+    fail = TrajectoryBundle(sb.generate(
+        "q-trajaudit", "ungrounded_citation", trace_id="q-e--f1"))
+    ctx = RunContext()
+    for b in (ok, fail):
+        create("represent", "canonical_events").run_one(b, ctx)
+    # AFTER flattening: strip all read_doc activity from the success reference
+    ok.trajectory.events = [
+        ev for ev in ok.trajectory.events
+        if not (ev.kind == "TOOL_CALL" and ev.action == "read_doc")
+        and not (ev.kind == "TOOL_RESULT" and ev.action == "read_doc")
+    ]
+    ActionSignatureRepresenter().run_corpus([ok, fail], ctx)
+    art = fail.get("represent", "action_signature")
+    assert art["anchor"] is None                    # degraded, not set()
+    assert art["milestones"] is None
+    assert "read nothing" in art["note"] and "anchor unavailable" in art["note"]
+    m = _sig_map(fail)
+    read_idx = next(
+        e.index for e in fail.trajectory.events
+        if e.kind == "TOOL_CALL" and e.action == "read_doc"
+    )
+    assert m[read_idx]["effect"] == "JUSTIFIED"     # not OFF-ANCHOR (poisoning)

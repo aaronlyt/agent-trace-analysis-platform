@@ -241,6 +241,9 @@ class Hypothesis:
     evidence: list[str] = field(default_factory=list)   # event ids + excerpt citations
     fix_suggestion: str = ""
     confidence: float = 0.0
+    source: str = ""               # producing attribution algorithm name (filled
+                                   # by bundle.hypotheses() when empty; lets
+                                   # cross-algorithm arbitration distinguish origins)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -252,6 +255,7 @@ class Hypothesis:
             "evidence": list(self.evidence),
             "fix_suggestion": self.fix_suggestion,
             "confidence": self.confidence,
+            "source": self.source,
         }
 
     @classmethod
@@ -265,4 +269,5 @@ class Hypothesis:
             evidence=list(d.get("evidence") or []),
             fix_suggestion=d.get("fix_suggestion", ""),
             confidence=float(d.get("confidence", 0.0)),
+            source=d.get("source", ""),
         )

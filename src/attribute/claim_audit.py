@@ -203,6 +203,7 @@ class ClaimAuditAttributor(Attributor):
 
         valid: list[dict] = []
         invalid_records: list[dict] = []
+        ledger_ids = {c["id"] for c in claims}
         for r in records.records:
             if r.support_status not in SUPPORT_LEVELS or r.verdict not in VERDICTS:
                 # kept on record rather than silently dropped (same
@@ -212,6 +213,20 @@ class ClaimAuditAttributor(Attributor):
                         "claim_id": r.claim_id,
                         "support_status": r.support_status,
                         "verdict": r.verdict,
+                    }
+                )
+                continue
+            if r.claim_id not in ledger_ids:
+                # the audit answered about a claim the ledger never saw —
+                # also kept on record in the invalid channel instead of
+                # silently dropping (a hallucinated id must not reach the
+                # Tracer prompt or the harmful-claim ranking)
+                invalid_records.append(
+                    {
+                        "claim_id": r.claim_id,
+                        "support_status": r.support_status,
+                        "verdict": r.verdict,
+                        "reason": "claim_id not in ledger",
                     }
                 )
                 continue

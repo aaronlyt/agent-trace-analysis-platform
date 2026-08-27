@@ -91,11 +91,29 @@ def config_from_dict(d: dict[str, Any]) -> PipelineConfig:
                 raise ConfigError(
                     f"stages.{stage}[{i}] must be 'name' or a {{name, params}} structure"
                 )
+            illegal = set(ent) - {"name", "params"}
+            if illegal:
+                # typo'd keys (e.g. paramz) must fail loudly, not be ignored
+                raise ConfigError(
+                    f"stages.{stage}[{i}] has unknown keys {sorted(illegal)}; "
+                    f"allowed keys are 'name' and 'params'"
+                )
             params = ent.get("params") or {}
             if not isinstance(params, dict):
                 raise ConfigError(f"stages.{stage}[{i}].params must be a dict")
             specs.append(AlgorithmSpec(stage=stage, name=ent["name"], params=params))
         stages[stage] = specs
+
+    closed_loop = d.get("closed_loop", False)
+    if not isinstance(closed_loop, bool):
+        # YAML "false"/"true" strings (or numbers) must not coerce to a truthy bool
+        raise ConfigError(
+            f"closed_loop must be a real boolean (true/false), got {closed_loop!r}"
+        )
+    try:
+        seed = int(d.get("seed", 0))
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"seed must be an integer, got {d.get('seed')!r}") from e
 
     return PipelineConfig(
         stages=stages,
@@ -103,8 +121,8 @@ def config_from_dict(d: dict[str, Any]) -> PipelineConfig:
         store=d.get("store"),
         llm=d.get("llm"),
         sandbox=d.get("sandbox"),
-        seed=int(d.get("seed", 0)),
-        closed_loop=bool(d.get("closed_loop", False)),
+        seed=seed,
+        closed_loop=closed_loop,
         run_name=str(d.get("run_name", "run")),
     )
 
@@ -119,9 +137,15 @@ def load_config(path: str | Path) -> PipelineConfig:
             import yaml  # lazy import: core's logic path does not hard-depend on it
         except ImportError as e:  # pragma: no cover
             raise ConfigError("pyyaml is required to read YAML config") from e
-        data = yaml.safe_load(text)
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            raise ConfigError(f"invalid YAML in config file {p}: {e}") from e
     else:
-        data = json.loads(text)
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise ConfigError(f"invalid JSON in config file {p}: {e}") from e
     if data is None:
         raise ConfigError(f"config file is empty: {p}")
     return config_from_dict(data)

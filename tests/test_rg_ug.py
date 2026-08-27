@@ -139,3 +139,117 @@ def test_missing_qrels_raises_explicitly():
     b, ctx = _bundle(trace)
     with pytest.raises(ValueError, match="qrels"):
         RGUGAttributor().run_one(b, ctx)
+
+
+def test_pre_search_read_enters_c_m_via_implicit_episode():
+    """A read issued before the first search used to belong to no episode
+    (excluded from every R_k, hence from C_M) while still counting toward
+    visit_precision's denominator. Gold read pre-search + wrong answer
+    submitted must therefore be judged UG (C_M contains gold via the implicit
+    leading episode), not RG."""
+    events = [
+        _ev(0, "TASK_START", "env", payload={"task": "which tool does X propose?"}),
+        _ev(1, "TOOL_CALL", "searcher", action="read_doc", phase="search",
+            payload={"doc_id": "d1"}),
+        _ev(2, "TOOL_RESULT", "env", action="read_doc", refs=["e001"], phase="search",
+            payload={"content": "doc d1 body"}),
+        _ev(3, "LLM_CALL", "reporter", refs=["e002"], phase="report",
+            payload={"content": "the answer is a magic fixer"}),
+        _ev(4, "TOOL_CALL", "reporter", action="submit", refs=["e003"], phase="report",
+            payload={"answer": "a magic fixer"}),
+        _ev(5, "VERIFIER", "verifier", refs=["e004"],
+            payload={"content": "failed: answer wrong"}),
+        _ev(6, "TASK_END", "env"),
+    ]
+    t = Trajectory(
+        trace_id="pre-search-read",
+        task="which tool does X propose?",
+        events=events,
+        outcome=Outcome(success=False, note="wrong answer"),
+        meta={"task_id": "q-pre", "qrels": {
+            "evidence": ["d1", "d2"], "gold": ["d1"],
+        }},
+    )
+    b, ctx = _bundle(t)
+    RGUGAttributor().run_one(b, ctx)
+    art = b.get("attribute", "rg_ug")
+    assert art["label"] == "UG_true_extraction"   # not RG: gold reached C_M
+    assert art["C_M"] == ["d1"]
+    assert art["episodes"][0]["implicit"] is True
+    assert art["episodes"][0]["start_index"] == 1  # the opening read call
+    assert art["M"] == 1
+    assert art["visit_precision"] == 1.0           # numerator/denominator now agree
+    assert art["first_gold_hit"] == 1
+    hyp = b.hypotheses()[0]
+    assert hyp.root_cause_code == "utilization_gap"
+    assert (hyp.agent, hyp.step) == ("reporter", 3)
+
+
+def test_ug_fallback_prefers_last_non_env_event():
+    """Gold surfaced yet no LLM_CALL follows it (and no contradiction fired):
+    the fallback target is the last non-env event (the submit call), not
+    events[0] (env TASK_START)."""
+    events = [
+        _ev(0, "TASK_START", "env", payload={"task": "which tool does X propose?"}),
+        _ev(1, "TOOL_CALL", "searcher", action="search", phase="search",
+            payload={"query": "x"}),
+        _ev(2, "TOOL_RESULT", "env", action="search", refs=["e001"], phase="search",
+            payload={"content": "search results for 'x': 2 docs [d1, d3]"}),
+        _ev(3, "TOOL_CALL", "searcher", action="read_doc", refs=["e002"], phase="search",
+            payload={"doc_id": "d3"}),
+        _ev(4, "TOOL_RESULT", "env", action="read_doc", refs=["e003"], phase="search",
+            payload={"content": "doc d3 body"}),
+        _ev(5, "TOOL_CALL", "reporter", action="submit", refs=["e004"], phase="report",
+            payload={"answer": "a wrong answer"}),
+        _ev(6, "TASK_END", "env"),
+    ]
+    t = Trajectory(
+        trace_id="ug-fallback",
+        task="which tool does X propose?",
+        events=events,
+        outcome=Outcome(success=False, note="wrong answer"),
+        meta={"task_id": "q-fb", "qrels": {
+            "evidence": ["d1", "d3"], "gold": ["d3"],
+        }},
+    )
+    b, ctx = _bundle(t)
+    RGUGAttributor().run_one(b, ctx)
+    art = b.get("attribute", "rg_ug")
+    assert art["label"] == "UG_true_extraction"
+    hyp = b.hypotheses()[0]
+    assert (hyp.agent, hyp.step) == ("reporter", 5)   # last non-env event
+
+
+def test_ug_fallback_all_env_trace_uses_first_event():
+    """Only when every event is env-owned does the fallback fall back to
+    events[0] (declared boundary, mirroring binary_search's s*=0)."""
+    events = [
+        _ev(0, "TASK_START", "env", payload={"task": "t"}),
+        _ev(1, "TOOL_CALL", "env", action="read_doc", payload={"doc_id": "d1"}),
+        _ev(2, "TOOL_RESULT", "env", action="read_doc", refs=["e001"],
+            payload={"content": "doc d1 body"}),
+        _ev(3, "TASK_END", "env"),
+    ]
+    t = Trajectory(
+        trace_id="all-env",
+        task="t",
+        events=events,
+        outcome=Outcome(success=False),
+        meta={"qrels": {"evidence": ["d1"], "gold": ["d1"]}},
+    )
+    b, ctx = _bundle(t)
+    RGUGAttributor().run_one(b, ctx)
+    hyp = b.hypotheses()[0]
+    assert (hyp.agent, hyp.step) == ("env", 0)
+
+
+def test_rg_no_search_evidence_renders_actual_kind():
+    """The RG no-search fallback targets the first LLM_CALL decision step —
+    the evidence line must render the event's actual kind, not a hardcoded
+    'search' label."""
+    b, ctx = _bundle(ToySandbox().generate("q-trajaudit", "premature_termination"))
+    RGUGAttributor().run_one(b, ctx)
+    hyp = b.hypotheses()[0]
+    assert hyp.root_cause_code == "retrieval_gap"
+    assert hyp.evidence[0].startswith("[1] planner LLM_CALL ")
+    assert "planner search " not in hyp.evidence[0]

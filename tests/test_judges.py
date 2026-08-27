@@ -242,6 +242,21 @@ def test_extra_modes_empty_definition_skipped_with_trace(tmp_path):
     assert "NM-2" in blob and "NM-1" not in blob  # empty definition never enters the prompt
 
 
+def test_judge_prompts_use_ascii_punctuation_only():
+    """Judge-visible prompt text must be pure ASCII/English punctuation: the
+    em dash (——) previously leaked from the definitions block into all three
+    judge prompts (taxonomy definitions + mast_judge few-shot/extra modes +
+    judge_eval few-shot); it is replaced with "--" everywhere the judge can
+    see it."""
+    from atap.analyze.judge_eval import _FEW_SHOT as JE_FEW_SHOT
+    from atap.classify.mast_judge import _FEW_SHOT as MAST_FEW_SHOT
+    from atap.classify.taxonomy import mast_definitions_block
+
+    for text in (JE_FEW_SHOT, MAST_FEW_SHOT, mast_definitions_block()):
+        assert "——" not in text
+        assert "--" in text   # the separator survives as ASCII "--"
+
+
 def test_taxonomy_definitions_align_with_paper_appendix_a():
     """Pins the wording restored in the fourth review round: the definitions
     below enter the judge prompt verbatim (mast_definitions_block), so drift

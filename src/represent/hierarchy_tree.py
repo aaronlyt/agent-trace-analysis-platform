@@ -36,7 +36,11 @@ commit; "exploration" = read-only tool calls on the environment such as
 search/read_doc (configurable via exploration_actions). TOOL_RESULT/
 VERIFIER/TASK_* are environment-side observations, attached to the summary of
 the step they belong to, not made into independent nodes (corresponding to
-the outcome dimension of the original's steps). Stage segmentation is also
+the outcome dimension of the original's steps; several observations on one
+step are joined with ``" | "`` — previously only the first survived). Steps
+outside every stage interval (no R0 phase) render an explicit
+``== stage: ? ==`` marker rather than ``== stage: None ==``. Stage
+segmentation is also
 [adapted]: the original's five stages are for the SWE domain, so this domain
 uses the R0 ``phase`` field directly (sandbox plan/search/report)]. Node
 summaries use deterministic templates (the idea of truncating the first line
@@ -101,7 +105,6 @@ class HierarchyTreeRepresenter(Representer):
         outcome_by_step: dict[str, list[str]] = {}
 
         # Environment observations attach to the nearest initiating step (outcome dimension)
-        pending_step: str | None = None
         for ev in events:
             if ev.kind in _STEP_KINDS:
                 is_exploration = (
@@ -119,16 +122,19 @@ class HierarchyTreeRepresenter(Representer):
                     }
                 )
                 prev_step = ev.id
-                pending_step = ev.id
-            elif pending_step is not None:
+            elif prev_step is not None:
                 content = str(ev.payload.get("content", ""))[:40]
                 if content:
-                    outcome_by_step.setdefault(pending_step, []).append(content)
+                    outcome_by_step.setdefault(prev_step, []).append(content)
 
         for n in nodes:
             outs = outcome_by_step.get(n["step"]) or []
             if outs:
-                n["summary"] = (n["summary"] + " -> " + outs[0])[:_MAX_SUMMARY + 40]
+                # several observations may attach to one step: join them
+                # (previously only the first survived)
+                n["summary"] = (n["summary"] + " -> " + " | ".join(outs))[
+                    :_MAX_SUMMARY + 40
+                ]
 
         stage_ranges = self._stage_ranges(events)
         tree_md = self._render_md(nodes, stage_ranges, events)
@@ -200,12 +206,14 @@ class HierarchyTreeRepresenter(Representer):
         lines: list[str] = ["# trace tree"]
         for r in stage_ranges:
             lines.append(f"# stage {r['stage']}: steps [{r['start']}..{r['end']}]")
-        current_stage = None
+        current_stage: str | None = None
         for i in sorted(index_by_step):
             st = stage_at.get(i)
             if st != current_stage:
                 current_stage = st
-                lines.append(f"== stage: {st} ==")
+                # a step outside every stage interval (no R0 phase) renders
+                # an explicit unknown marker instead of "== stage: None =="
+                lines.append(f"== stage: {st if st is not None else '?'} ==")
             n = index_by_step[i]
             lines.append(f"{'  ' * depth(n['step'])}{n['step']} {n['summary']}")
         # Terminal-state line (the judge needs to know how the task ended; aligned with judge_view's outcome line)

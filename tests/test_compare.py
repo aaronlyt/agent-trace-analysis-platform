@@ -63,7 +63,14 @@ def test_run_compare_two_configs(tmp_path):
     for r in rows.values():
         assert r["n_failed"] == 18
         assert "llm_calls_by_tag" in r and r["llm_calls"] > 0
-        assert len(r["per_fault"]) == 6
+        # per_fault is keyed by trace_id (3 tasks x 6 fault kinds = 18 records,
+        # each carrying its fault kind) -- no per-kind overwriting
+        assert len(r["per_fault"]) == 18
+        assert all("kind" in rec for rec in r["per_fault"].values())
+        # per_kind aggregates hits/total by fault kind and backs per-kind
+        # conclusions
+        assert len(r["per_kind"]) == 6
+        assert sum(a["total"] for a in r["per_kind"].values()) == 18
     # both configs recovered all 18 (pseudo-judge feedback closed loop)
     assert rows["cmp-all-at-once"]["recovered"] == 18
     assert rows["cmp-binary"]["recovered"] == 18
@@ -87,6 +94,18 @@ def test_run_compare_rejects_mismatched_sources(tmp_path):
     )
     with pytest.raises(ValueError, match="same trajectory set"):
         run_compare([a, str(tmp_path / "b.json")], tmp_path / "cmp")
+
+
+def test_run_compare_rejects_existing_run_dir(tmp_path):
+    """An existing target run directory must raise instead of silently
+    overwriting a previous comparison run's artifacts."""
+    from tests.helpers import write_traces_jsonl
+
+    src = write_traces_jsonl(tmp_path / "t.jsonl", ToySandbox().generate_corpus(1))
+    a = _write_cfg(tmp_path / "a.json", "dup-name", "all_at_once")
+    (tmp_path / "cmp" / "dup-name").mkdir(parents=True)
+    with pytest.raises(ValueError, match="already exists"):
+        run_compare([a], tmp_path / "cmp", traces=src)
 
 
 def test_counting_llm_passes_through(tmp_path):

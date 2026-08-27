@@ -50,6 +50,17 @@ duplicated content]) [declared]. Attribution-side consumption convention
 this module):
 ``ancestors(v)`` = reverse BFS along edges; ``impact`` ranking uses the
 formula above.
+
+Consumption honesty [declared, same style as hcg's mechanism-gap note]:
+**no algorithm or prompt in the current repository actually consumes the
+``ancestors(v)`` backtracking or the ``impact`` ranking convention** — the
+attribution layer localizes through its own algorithms and never walks
+these dependency edges; the artifact's ``edges`` are read only by
+structural tests. The convention above is a placeholder for future
+consumers, not an exercised mechanism. Malformed forward references (a ref
+whose target event exists but is not earlier) are dropped from the graph
+and counted in ``stats.dropped_forward_refs`` rather than silently
+vanishing.
 """
 
 from __future__ import annotations
@@ -94,6 +105,7 @@ class IDGRepresenter(Representer):
 
         edges: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
+        dropped_forward = 0
         index_by_id = {ev.id: ev.index for ev in events}
         for ev in events:
             if ev.id not in node_ids:
@@ -102,12 +114,16 @@ class IDGRepresenter(Representer):
                 # usage edge direction: referenced (upstream) -> referencing
                 # (downstream); time-order guard (refs semantically point to
                 # earlier artifacts; the original's t_vi<t_vj condition is
-                # kept defensively)
+                # kept defensively). A ref that points at a non-earlier event
+                # (a malformed forward reference) is dropped and **counted**
+                # (stats.dropped_forward_refs) instead of silently vanishing
                 if ref in node_ids and index_by_id[ref] < ev.index:
                     key = (ref, ev.id)
                     if key not in seen:
                         seen.add(key)
                         edges.append({"src": ref, "dst": ev.id})
+                elif ref in index_by_id and index_by_id[ref] >= ev.index:
+                    dropped_forward += 1
 
         in_deg = {n["event_id"]: 0 for n in nodes}
         for e in edges:
@@ -125,6 +141,7 @@ class IDGRepresenter(Representer):
                     "n_events": len(events),
                     "n_nodes": len(nodes),
                     "n_edges": len(edges),
+                    "dropped_forward_refs": dropped_forward,
                     "n_sources": n_sources,
                     "node_ratio": round(len(nodes) / len(events), 4) if events else 0.0,
                     "edges_per_node": round(len(edges) / len(nodes), 4) if nodes else 0.0,

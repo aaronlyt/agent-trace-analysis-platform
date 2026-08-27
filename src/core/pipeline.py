@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from atap.core.base import STAGE_ORDER
 
@@ -60,6 +60,9 @@ class Pipeline:
 
     def __init__(self, algorithms: list["StageAlgorithm"]) -> None:
         self.algorithms = algorithms
+        # reruns collected by the most recent run() (explicit state, no getattr;
+        # overwritten on every run)
+        self.last_reruns: list["Trajectory"] = []
 
     def run(
         self, trajectories: list["Trajectory"], ctx: "RunContext"
@@ -106,40 +109,61 @@ class Pipeline:
         wording): for each origin only its **last** rerun enters the
         verification round (mid-way failed attempts are excluded); the
         verification round runs recover again -- still-failing reruns get
-        re-attributed and rerun again (nested recovery), limited to a single
-        verification round by ``max_rounds=1``.
+        re-attributed and rerun again (nested recovery). ``max_rounds``: the
+        verification round is capped at one round -- any value >= 1 enables
+        it, larger values do not add rounds.
 
         Returns the **first-round bundles** (preserving full
         attribution/recovery artifacts), where each rerun trajectory
         additionally carries a ``recover/closed_loop`` artifact recording the
         verification verdict; the verification round's report is appended to
-        reports (the stage 6 -> 3 loop).
+        reports (the stage 6 -> 3 loop). The verification round's judge
+        verdict is recorded alongside under ``verify`` (the
+        ``analyze/judge_eval`` score/summary re-read from the
+        verification-round bundle matched by the rerun's trace_id), so the
+        closed_loop artifact keeps judge-vs-outcome evidence on record for
+        cross-audit -- the DRIFT "successful trajectory with a hidden
+        erroneous step" contradiction is discoverable exactly here.
         """
         origin_bundles, report = self.run(trajectories, ctx)
         reports = [report]
-        reruns = getattr(self, "last_reruns", [])
-        if reruns and max_rounds >= 1:
+        if self.last_reruns and max_rounds >= 1:
             rerun_by_origin: dict[str, Trajectory] = {}
-            for t in reruns:
+            for t in self.last_reruns:
                 origin = t.meta.get("rerun_of")
                 if origin:
                     rerun_by_origin[origin] = t
             current = [rerun_by_origin.get(t.trace_id, t) for t in trajectories]
-            _, verify_report = self.run(current, ctx)
+            verify_bundles, verify_report = self.run(current, ctx)
             reports.append(verify_report)
+            verify_bundle_by_trace = {b.trace_id: b for b in verify_bundles}
             improved = set()  # trace_ids of successful trajectories in the verification round
             for t in current:
                 if t.outcome.success:
                     improved.add(t.trace_id)
             for b in origin_bundles:
                 repl = rerun_by_origin.get(b.trace_id)
+                verify: dict[str, Any] | None = None
+                if repl is not None:
+                    vb = verify_bundle_by_trace.get(repl.trace_id)
+                    judge_art = vb.get("analyze", "judge_eval") if vb is not None else None
+                    judge_available = isinstance(judge_art, dict)
+                    verify = {
+                        "outcome_success": repl.trace_id in improved,
+                        "judge": (
+                            {"score": judge_art.get("score"),
+                             "summary": judge_art.get("summary")}
+                            if judge_available else None
+                        ),
+                        "judge_available": judge_available,
+                    }
                 b.put(
                     "recover",
                     "closed_loop",
                     {
                         "rerun_trace_id": repl.trace_id if repl else None,
                         "verified_improved": bool(repl and repl.trace_id in improved),
+                        "verify": verify,
                     },
                 )
-            ctx.closed_loop_rounds += 1
         return origin_bundles, reports

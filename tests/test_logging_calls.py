@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import logging
 
+import pytest
+
 from atap.llm import FakeLLMClient
 from atap.log import attach_run_log, get_logger, setup_logging
 
@@ -67,6 +69,7 @@ def test_openai_client_wrapper_logs_usage_without_network(tmp_path):
     client._last_call_ts = 0.0
     client.calls = []
     client.retries = []
+    client.parse_retries = []
     client.http_requests = 0
     client._call_log_path = None
 
@@ -127,6 +130,7 @@ def test_openai_client_empty_choices_retry_and_crash_audit(tmp_path):
         c._last_call_ts = 0.0
         c.calls = []
         c.retries = []
+        c.parse_retries = []
         c.http_requests = 0
         c._call_log_path = None
         c._client = types.SimpleNamespace(
@@ -176,6 +180,138 @@ def test_openai_client_empty_choices_retry_and_crash_audit(tmp_path):
         pass
     rec = json.loads((tmp_path / "c3.jsonl").read_text(encoding="utf-8"))
     assert rec["ok"] is False and "TypeError" in rec["error"]
+
+
+def _bare_openai_client():
+    """OpenAICompatibleLLMClient without __init__ (no openai import, no
+    network) and with the attributes _complete/complete touch."""
+    import types
+
+    from atap.llm.openai_client import OpenAICompatibleLLMClient
+
+    c = OpenAICompatibleLLMClient.__new__(OpenAICompatibleLLMClient)
+    c.model = "m"
+    c.temperature = 0.0
+    c.max_completion_tokens = 64
+    c.max_retries = 0
+    c.retry_base_delay = 0.0
+    c.request_interval = 0.0
+    c._last_call_ts = 0.0
+    c.calls = []
+    c.retries = []
+    c.parse_retries = []
+    c.http_requests = 0
+    c._call_log_path = None
+    c._client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=None))
+    )
+    return c
+
+
+class _Reply:
+    def __init__(self, content: str):
+        import types
+
+        self.usage = None
+        self.choices = [types.SimpleNamespace(
+            message=types.SimpleNamespace(content=content)
+        )]
+
+
+def test_openai_structured_retry_costs_three_calls_not_four(tmp_path):
+    """Parse-repair loop contract: the reply at hand is parsed first and a
+    new reply is only pulled while retry budget remains -- a persistently
+    unparseable reply costs exactly 1 + 2 = 3 _create calls (2 retries),
+    not 4 (previously the reply fetched after the 3rd parse failure was
+    discarded unexamined); the audit's retries count records the 2 parse
+    repairs."""
+    from pydantic import BaseModel
+
+    from atap.llm import LLMError
+
+    class Schema(BaseModel):
+        value: int
+
+    c = _bare_openai_client()
+    n_create = 0
+
+    def always_garbage(payload_messages, use_model, tag):
+        nonlocal n_create
+        n_create += 1
+        c.http_requests += 1
+        return _Reply("this is not JSON at all")
+
+    c._create = always_garbage
+    c.attach_call_log(tmp_path / "parse.jsonl")
+    with pytest.raises(LLMError, match="structured parsing still failing"):
+        c.complete(
+            [{"role": "system", "content": "s"},
+             {"role": "user", "content": "q"}],
+            schema=Schema, tag="parse-dead",
+        )
+    assert n_create == 3                       # 1 initial + 2 retries, not 4
+    assert len(c.parse_retries) == 2
+    rec = json.loads((tmp_path / "parse.jsonl").read_text(encoding="utf-8"))
+    assert rec["ok"] is False
+    assert rec["http_requests"] == 3 and rec["retries"] == 2
+
+    # success on the 3rd reply also costs exactly 3 calls (2 retries)
+    c2 = _bare_openai_client()
+    replies = iter(["nope", "still nope", '{"value": 7}'])
+    n2 = 0
+
+    def recovering(payload_messages, use_model, tag):
+        nonlocal n2
+        n2 += 1
+        c2.http_requests += 1
+        return _Reply(next(replies))
+
+    c2._create = recovering
+    result = c2.complete([{"role": "user", "content": "q"}], schema=Schema, tag="parse-ok")
+    assert result.parsed.value == 7
+    assert n2 == 3
+
+
+def test_openai_schema_instruction_merges_into_first_system_message():
+    """The JSON-Schema constraint is appended to the FIRST system message's
+    content (message order stays [system, user]) instead of arriving as a
+    second trailing system message."""
+    from pydantic import BaseModel
+
+    class Schema(BaseModel):
+        value: int
+
+    c = _bare_openai_client()
+    seen = {}
+
+    def capture(payload_messages, use_model, tag):
+        c.http_requests += 1
+        seen["messages"] = payload_messages
+        return _Reply('{"value": 1}')
+
+    c._create = capture
+    c.complete(
+        [{"role": "system", "content": "base instruction"},
+         {"role": "user", "content": "q"}],
+        schema=Schema, tag="merge",
+    )
+    msgs = seen["messages"]
+    assert [m["role"] for m in msgs] == ["system", "user"]   # no second system turn
+    assert msgs[0]["content"].startswith("base instruction")
+    assert "JSON Schema" in msgs[0]["content"] and "value" in msgs[0]["content"]
+
+    # no leading system message: one is prepended, order stays [system, user]
+    seen.clear()
+
+    def capture2(payload_messages, use_model, tag):
+        c.http_requests += 1
+        seen["messages"] = payload_messages
+        return _Reply('{"value": 1}')
+
+    c._create = capture2
+    c.complete([{"role": "user", "content": "q"}], schema=Schema, tag="prepend")
+    assert [m["role"] for m in seen["messages"]] == ["system", "user"]
+    assert "JSON Schema" in seen["messages"][0]["content"]
 
 
 # ------------------------------------------------------------ log framework --

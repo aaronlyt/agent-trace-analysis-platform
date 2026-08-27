@@ -29,7 +29,11 @@ represent/hcg); within the three-level backtracking, the agent level and step
 level are merged into the localization call (sandbox has ≤3 agents); the
 mechanism field carries the progressive-filtering conclusion
 (local_error/upstream_propagation/executor_loop/planning_error/
-dataflow_first_pollution — **upstream_propagation is an extension beyond the
+dataflow_first_pollution — the vocabulary is **clamped**: a free-string
+mechanism outside MECHANISMS is mapped to the closest vocabulary word
+(difflib, else "unknown") with the raw value kept in evidence and the
+artifact's ``mechanism_clamped`` entry — same discipline as all_at_once's
+failure_mode handling — and **upstream_propagation is an extension beyond the
 paper's four-stage screening**: §4.3 defines only Local / Planning-Control /
 Data-Flow / Deviation-Aware four stages; when S_cause≠∅ the paper proceeds to
 the Planning-Control/Data-Flow stages rather than emitting a separate
@@ -65,6 +69,8 @@ implementation does not reproduce); token 2.5-3× (w/ G measured, Table 2).
 """
 
 from __future__ import annotations
+
+import difflib
 
 from pydantic import BaseModel, Field
 
@@ -255,6 +261,7 @@ class ChiefAttributor(Attributor):
             v.responsible_agent
             if v.responsible_agent in t.agents() else t.agents()[0]
         )
+        mechanism = self._clamp_mechanism(v.mechanism)
         ev = t.events[step]
         fail_oracle = oracle_by_id.get(failing["id"])
         oracle_line = (
@@ -264,7 +271,7 @@ class ChiefAttributor(Attributor):
         hyp = Hypothesis(
             agent=responsible,
             step=step,
-            root_cause=f"[{v.mechanism}] {v.reason}",
+            root_cause=f"[{mechanism}] {v.reason}",
             root_cause_code=None,
             responsible_side="model",
             evidence=[
@@ -277,18 +284,37 @@ class ChiefAttributor(Attributor):
             fix_suggestion=v.fix_suggestion,
             confidence=v.confidence,
         )
+        # clamp-with-trace (same discipline as all_at_once's failure_mode):
+        # an out-of-vocabulary mechanism is clamped, and the raw judge value
+        # is preserved in evidence + artifact rather than silently rewritten
+        if mechanism != v.mechanism:
+            hyp.evidence.append(
+                f"(judgement clamped: mechanism {v.mechanism!r}->{mechanism!r}: "
+                f"not in {MECHANISMS})"
+            )
         if fallback_note:
             hyp.evidence.append(fallback_note)
-        bundle.put(
-            "attribute",
-            self.name,
-            {
-                "hypotheses": [hyp.to_dict()],
-                "oracles": [o.model_dump() for o in oracles.oracles],
-                "subtask_evals": [e.model_dump() for e in evals.evals],
-                "failing_subtask": failing["id"],
-                "mechanism": v.mechanism,
-                "fallback_note": fallback_note,
-                "n_llm_calls": 3,
-            },
+        artifact: dict = {
+            "hypotheses": [hyp.to_dict()],
+            "oracles": [o.model_dump() for o in oracles.oracles],
+            "subtask_evals": [e.model_dump() for e in evals.evals],
+            "failing_subtask": failing["id"],
+            "mechanism": mechanism,
+            "fallback_note": fallback_note,
+            "n_llm_calls": 3,
+        }
+        if mechanism != v.mechanism:
+            artifact["mechanism_clamped"] = {"from": v.mechanism, "to": mechanism}
+        bundle.put("attribute", self.name, artifact)
+
+    @staticmethod
+    def _clamp_mechanism(raw: str) -> str:
+        """Clamp a free-string mechanism into MECHANISMS: closest vocabulary
+        word by difflib similarity, else "unknown" (never passes an
+        out-of-vocabulary value into the artifact unchecked)."""
+        if raw in MECHANISMS:
+            return raw
+        close = difflib.get_close_matches(
+            raw.lower(), MECHANISMS, n=1, cutoff=0.6
         )
+        return close[0] if close else "unknown"

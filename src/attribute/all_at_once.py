@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from atap.attribute.base import Attributor
 from atap.classify.taxonomy import MAST_MODES, mast_definitions_block  # shared vocabulary
 from atap.core.registry import register
-from atap.core.render import judge_view, render_event_line
+from atap.core.render import judge_view
 from atap.core.schema import Hypothesis
 
 

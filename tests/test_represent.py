@@ -224,3 +224,32 @@ def test_judge_view_uses_fold():
     assert "⟦folded:" not in view
     # the key evidence (error observation) is kept in the folded view
     assert "error: invalid arguments" in view
+
+
+def test_canonical_missing_span_id_raises_value_error():
+    """A span node without the 'id' key used to die with a bare KeyError
+    deep inside the walk; it now raises an explicit ValueError naming the
+    span kind and flattened position (refs are span-id anchored)."""
+    spans = [
+        {"id": "s1", "kind": "TOOL_CALL", "agent": "searcher"},
+        {"kind": "LLM_CALL", "agent": "planner"},   # missing id
+    ]
+    with pytest.raises(ValueError, match=r"kind=LLM_CALL.*missing the required 'id' key"):
+        _flatten_spans(spans)
+
+
+def test_canonical_case_normalization_not_counted_as_remapped():
+    """Pure case/whitespace normalization ("tool_call" -> TOOL_CALL) is
+    in-vocabulary and must not inflate remapped_kinds; only alias/fallback
+    admissions (SPAN alias, unknown kind, missing kind) count."""
+    spans = [
+        {"id": "a", "kind": "tool_call", "agent": "w"},     # case-only
+        {"id": "b", "kind": " tool_result ", "agent": "x"},  # case + outer whitespace
+        {"id": "c", "kind": "SPAN", "agent": "y"},          # alias admission
+        {"id": "d", "kind": None, "agent": "z"},            # fallback admission
+    ]
+    b, t = _flatten_spans(spans)
+    assert [e.kind for e in t.events] == [
+        "TOOL_CALL", "TOOL_RESULT", "AGENT_MESSAGE", "AGENT_MESSAGE",
+    ]
+    assert b.get("represent", "canonical_events")["remapped_kinds"] == 2

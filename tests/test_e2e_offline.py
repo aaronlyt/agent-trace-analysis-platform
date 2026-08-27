@@ -83,6 +83,12 @@ def test_classify_and_recover(e2e, kind):
 
     loop = b.get("recover", "closed_loop")
     assert loop["verified_improved"] is True
+    # verification-round judge evidence is kept in the closed_loop artifact
+    # (cross-audit: judge vs outcome contradictions stay on record)
+    assert loop["verify"]["outcome_success"] is True
+    assert loop["verify"]["judge_available"] is True
+    assert isinstance(loop["verify"]["judge"]["score"], (int, float))
+    assert loop["verify"]["judge"]["summary"]
 
 
 def test_success_traces_scored_high_not_attributed(e2e):
@@ -95,11 +101,15 @@ def test_success_traces_scored_high_not_attributed(e2e):
 
 
 def test_closed_loop_second_round_all_pass(e2e):
-    _, reports, _ = e2e
+    bundles, reports, _ = e2e
     assert len(reports) == 2  # initial round + closed-loop verification round
     assert reports[0].n_failures == 6
     assert reports[1].n_failures == 0  # all rerun trajectories pass the full-pipeline verification
     assert reports[1].n_attributed == 0
+    # origins without a rerun carry no verification evidence (verify is None)
+    ok = next(b for b in bundles if b.succeeded)
+    loop = ok.get("recover", "closed_loop")
+    assert loop["rerun_trace_id"] is None and loop["verify"] is None
 
 
 def test_artifacts_persisted(e2e):
@@ -111,3 +121,28 @@ def test_artifacts_persisted(e2e):
     assert len(files) >= 7 * 5 + 1
     report = json.loads((arts / "report.json").read_text(encoding="utf-8"))
     assert report["n_reruns"] == 6 and report["n_rerun_success"] == 6
+    # per-round breakdown: n_traces is the round-inclusive total (7 + 7),
+    # the by-round lists expose the initial vs verification round split
+    assert report["n_traces_by_round"] == [7, 7]
+    assert report["n_failures_by_round"] == [6, 0]
+
+
+def test_demo_skips_failures_without_gt(tmp_path, monkeypatch, capsys):
+    """A failure trajectory without injected-fault GT must be skipped by the
+    demo report (same guard as compare.evaluate_against_gt), not crash it."""
+    from atap.demo import run_demo
+    from atap.sandbox import ToySandbox
+
+    real = ToySandbox.generate_population
+
+    def patched(self, seed):
+        traces = real(self, seed)
+        for t in traces:
+            if not t.outcome.success:
+                t.meta.pop("injected_fault", None)   # simulate missing GT
+        return traces
+
+    monkeypatch.setattr(ToySandbox, "generate_population", patched)
+    run_demo(seed=7, out=tmp_path / "demo")   # must not raise
+    out = capsys.readouterr().out
+    assert "gt=None@stepNone" not in out

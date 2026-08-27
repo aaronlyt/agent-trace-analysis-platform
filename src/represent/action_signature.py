@@ -24,7 +24,14 @@ Mechanism (original sections III-B/III-E, Table I/II):
   oracle-*grounded* territory (its own milestones block is explicitly marked
   oracle-grounded); it reads neither the gold patch nor
   meta["injected_fault"]; broader than the gold-patch "modified files"
-  semantics, so OFF-ANCHOR decisions are correspondingly conservative];
+  semantics (a successful trajectory's whole read list, not just
+  gold-deriving documents, counts), so OFF-ANCHOR decisions are
+  correspondingly conservative — with the declared exclusion that **failed
+  reads never count**: a read whose observation is an error (effect=FAILED)
+  contributes neither to the anchor set nor to milestone anchor reads];
+  when the success reference reads nothing at all, the anchor degrades to
+  None (an empty anchor set would mark every read OFF-ANCHOR — declared in
+  the artifact note);
 * **Milestones** M1..M5 (original: first anchor read / first anchor write /
   all anchors written / first passing validation / first justified action)
   and **monotonic LCS alignment** against the success-reference signature
@@ -234,7 +241,13 @@ class ActionSignatureRepresenter(Representer):
                         s["target"]
                         for s in self._signatures(b.trajectory, anchor=None)
                         if s["action_class"] == "FILE_READ"
+                        and s["effect"] != "FAILED"   # failed reads contribute no read content
                     )
+                if not anchor:
+                    # the success reference read nothing: an empty anchor set
+                    # would mark every read OFF-ANCHOR and make M3 vacuously
+                    # false — degrade to anchor=None (declared in the note)
+                    anchor = None
                 # reference = the successful trajectory with the fewest steps (original: per-task most-efficient)
                 ref_bundle = min(
                     ok_bundles, key=lambda b: len(b.trajectory.events)
@@ -269,6 +282,11 @@ class ActionSignatureRepresenter(Representer):
                 }
                 if anchor is None:
                     bundle_artifact["note"] = (
+                        f"task {key}: success reference read nothing; anchor"
+                        " unavailable (an empty anchor set would mark every"
+                        " read OFF-ANCHOR, so the anchor-dependent tags and"
+                        " milestones are skipped)"
+                        if ok_bundles else
                         f"task {key} has no successful trajectory in its group:"
                         " anchor set/milestones/LCS unavailable"
                         " (TraceProbe's anchor set requires a task-relevant reference)"
@@ -339,7 +357,11 @@ class ActionSignatureRepresenter(Representer):
         if ev.action == "submit":
             v = verify_by_call.get(ev.id)
             if v is not None:
-                return "SURVIVED" if v.payload.get("content", "").startswith("passed") else "FAILED"
+                return (
+                    "SURVIVED"
+                    if str(v.payload.get("content", "")).startswith("passed")
+                    else "FAILED"
+                )
             return "FAILED"              # a submission without a verification observation is treated as failed [adaptation]
         res = result_by_call.get(ev.id)
         failed = res is not None and is_error_observation(str(res.payload.get("content", "")))
@@ -366,6 +388,7 @@ class ActionSignatureRepresenter(Representer):
         anchor_reads = [
             s for s in sigs
             if s["action_class"] == "FILE_READ" and s["target"] in anchor
+            and s["effect"] != "FAILED"   # a failed read delivered no content: not an anchor read
         ]
         # The earliest moment of "all anchors read" = the max over the index
         # of each anchor's **first** read (repeated reads do not rewrite the

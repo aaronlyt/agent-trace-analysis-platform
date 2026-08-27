@@ -20,7 +20,7 @@ Registry、YAML 配置组合 pipeline；算法之间只通过产物（artifact�
 
 ```bash
 uv venv .venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/          # 216 个测试（含离线全链路 e2e 与审计回归）
+.venv/bin/python -m pytest tests/          # 312 个测试（含离线全链路 e2e 与审计回归）
 .venv/bin/atap demo                        # 离线全链路演示（FakeLLM，确定性）
 .venv/bin/atap run --config configs/pipeline_offline.yaml
 # 阶段三全栈（R5+循环谓词+L0 规则包+二分+反馈注入，频谱语料 24 条）：
@@ -70,6 +70,16 @@ print(len(recs), dict(collections.Counter(r['tag'] for r in recs)))"
 round0: traces=7 failures=6 attributed=6 reruns=6(ok=6)
 round1: traces=7 failures=0   ← 重跑轨迹全部通过全流程闭环验证
 ```
+
+> ⚠️ **离线"恢复 N/N"数字是构造性回环，不衡量判官/恢复能力**（与上文 CHIEF
+> 18/18 的 ⚠️ 同级别的 caveat，适用于 demo/阶段三/阶段四C 各处出现的"恢复
+> 6/6"与闭环 failures=0）：伪判官的 fix 文案在 `llm/pseudo_judge.py` 的
+> fixes 字典中固定内嵌故障名，targeted_rerun/feedback_injection 将其原样
+> 作为反馈注入，沙盒按"反馈文本是否含故障名关键词子串"判定故障移除。因此
+> 离线恢复率是**归因命中的确定性函数**——只要 step 定位命中，恢复必然命中；
+> 它衡量的是管路契约（Hypothesis→反馈→重放→验证的链路正确性），相对
+> step/agent 命中率不含独立信息。真实模型的恢复数字见下方各轮 realtest
+> 记录（曾出现 恢复 0/6 → 修复消费机制后 6/6 的真实差异）。
 
 阶段三全栈（24 条语料）离线验收：二分定位 **step 5/6、agent 6/6**；
 SBFL 频谱 4/6（miss 两例为方法边界：一次性动作被 γ 压制、内容级故障在

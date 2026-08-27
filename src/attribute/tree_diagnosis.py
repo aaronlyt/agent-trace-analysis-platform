@@ -18,7 +18,9 @@ stage's events + the tail of the previous stage as neighbor context, output
 the attribution). What remains of the anti-cheating spirit: the drill-down
 render must genuinely contain the attributed step (guaranteed by the module,
 not by judge self-discipline — the verdict step is clamped into the rendered
-interval [lo, stage_end]). Stage-span selection when one stage name maps to
+interval [lo, stage_end], and every clamp of step/agent/failure_mode leaves
+a note in the Hypothesis evidence — all_at_once's clamp-with-trace
+discipline). Stage-span selection when one stage name maps to
 several ranges (paper appendix A: a trajectory may revisit a stage, and each
 contiguous block gets its own span): prefer the span **containing the
 failure event index** — the failure index is derived deterministically from
@@ -193,13 +195,28 @@ class TreeDiagnosisAttributor(Attributor):
         assert isinstance(v, TreeDrillVerdict)
         # Anti-cheating guarantee (docstring): the attributed step must lie
         # inside the rendered drill view [lo, rng.end] — clamp the judge's
-        # verdict into that interval instead of the whole trajectory.
+        # verdict into that interval instead of the whole trajectory. Every
+        # clamp (step / agent / failure_mode) leaves a note in the evidence,
+        # same discipline as all_at_once (nothing silently rewritten).
         step = min(max(v.step, lo), rng["end"])
         responsible = (
             v.responsible_agent
             if v.responsible_agent in t.agents() else t.agents()[0]
         )
         code = v.failure_mode if v.failure_mode in MAST_MODES else None
+        clamp_notes: list[str] = []
+        if v.step != step:
+            clamp_notes.append(f"(judgement clamped: step {v.step}->{step})")
+        if v.responsible_agent != responsible:
+            clamp_notes.append(
+                f"(judgement clamped: agent {v.responsible_agent!r}->"
+                f"{responsible!r})"
+            )
+        if v.failure_mode is not None and code is None:
+            clamp_notes.append(
+                f"(judgement clamped: failure_mode {v.failure_mode!r}->None: "
+                f"not a MAST code)"
+            )
         ev = t.events[step]
 
         hyp = Hypothesis(
@@ -216,6 +233,7 @@ class TreeDiagnosisAttributor(Attributor):
             fix_suggestion=v.fix_suggestion,
             confidence=v.confidence,
         )
+        hyp.evidence.extend(clamp_notes)
         full_lines = len(render_trace(t).splitlines())
         bundle.put(
             "attribute",

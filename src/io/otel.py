@@ -48,6 +48,8 @@ from typing import Any
 
 from atap.core.schema import Outcome, Trajectory
 
+from atap.io._leak_guard import export_safe_meta
+
 _OP_TO_KIND = {
     "chat": "LLM_CALL",
     "execute_tool": "TOOL_CALL",
@@ -113,10 +115,7 @@ def export_otel(traces: list[Trajectory]) -> dict[str, Any]:
             ]
             if ev.index == 0:   # trace-level info attaches only to the first event (merged on import)
                 attrs += [
-                    _attr_kv("atap.trace_meta", {
-                        k: v for k, v in t.meta.items()
-                        if k not in ("injected_fault",)   # GT not exported (leak prevention)
-                    }),
+                    _attr_kv("atap.trace_meta", export_safe_meta(t.meta)),
                     _attr_kv("atap.task", t.task),
                     _attr_kv("atap.outcome", t.outcome.to_dict()),
                 ]
@@ -159,17 +158,18 @@ class OTelTraceSource:
         text = Path(self.path).read_text(encoding="utf-8").strip()
         if not text:
             return []
-        if text[0] == "[":
-            docs = []
-            for line in text.splitlines():
-                line = line.strip().rstrip(",").strip()
-                if line.startswith("{"):
-                    docs.append(json.loads(line))
-            if docs:
-                return docs
-            return [json.loads(text)]
-        if text[0] == "{":
-            return [json.loads(text)]
+        try:
+            # whole-document JSON first: covers compact and pretty-printed
+            # arrays as well as single objects (a pretty array's member lines
+            # are not standalone JSON, so a line-first strategy would crash)
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            return [data]
+        if isinstance(data, list):
+            return [d for d in data if isinstance(d, dict)]
+        # fallback: JSONL, one OTLP document per line
         docs = []
         for line in text.splitlines():
             line = line.strip()

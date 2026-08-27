@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar
 
+from atap.core.base import STAGE_ORDER
+
 if TYPE_CHECKING:
     from atap.core.base import StageAlgorithm
 
@@ -33,7 +35,9 @@ class RegistryError(Exception):
 
 _REGISTRY: dict[tuple[str, str], type["StageAlgorithm"]] = {}
 
-STAGES = ("represent", "analyze", "classify", "attribute", "recover")
+# single source of truth: the stage set is derived from base.STAGE_ORDER
+# (base.py imports nothing from atap at runtime, so this cannot cycle)
+STAGES = tuple(STAGE_ORDER)
 
 
 def register(cls: type[_T]) -> type[_T]:

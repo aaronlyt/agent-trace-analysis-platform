@@ -8,14 +8,23 @@ import json
 
 import pytest
 
-from atap.attribute.chief import ChiefAttributor
+from atap.attribute.chief import (
+    ChiefAttributor,
+    ChiefVerdict,
+    OracleSet,
+    SubtaskEval,
+    SubtaskEvals,
+)
 from atap.attribute.claim_audit import (
     ClaimAuditAttributor,
     SupportRecord,
     SupportRecords,
     TraceVerdict,
 )
-from atap.attribute.tree_diagnosis import TreeDiagnosisAttributor
+from atap.attribute.tree_diagnosis import (
+    StagePick,
+    TreeDiagnosisAttributor,
+)
 from atap.core.bundle import TrajectoryBundle
 from atap.core.context import RunContext
 from atap.core.registry import create
@@ -414,3 +423,109 @@ def test_stage4b_runtime_prompts_no_fault_leakage():
                         f"{kind}: runtime prompt leaks {word!r} "
                         f"(tag={call['tag']}): {blob[:120]}..."
                     )
+
+
+# ------------------------------------------------- clamp-with-trace (4B) --
+
+
+def _chief_scripted(mechanism: str):
+    """Bundle + context with hcg configured and the three chief calls
+    scripted (empty oracles; S1 fails acceptance; localize verdict with the
+    given mechanism)."""
+    b, _ = _bundle(ToySandbox().generate("q-who-when", "malformed_tool_call"),
+                   reps=())
+    ctx = RunContext(llm=FakeLLMClient(responses=[
+        OracleSet(oracles=[]),
+        SubtaskEvals(evals=[SubtaskEval(subtask_id="S1", passed=False)]),
+        ChiefVerdict(responsible_agent="searcher", step=3,
+                     mechanism=mechanism, reason="r",
+                     fix_suggestion="f", confidence=0.6),
+    ]))
+    create("represent", "hcg").run_one(b, ctx)
+    return b, ctx
+
+
+def test_chief_clamps_out_of_vocab_mechanism():
+    """ChiefVerdict.mechanism is a free string; an out-of-vocabulary value
+    used to enter the artifact verbatim. It is now clamped to the closest
+    MECHANISMS word (difflib) or "unknown", with the raw value preserved in
+    the evidence and the artifact's mechanism_clamped entry (all_at_once
+    failure_mode discipline)."""
+    b, ctx = _chief_scripted("local_err")          # close to local_error
+    ChiefAttributor().run_one(b, ctx)
+    art = b.get("attribute", "chief")
+    assert art["mechanism"] == "local_error"
+    assert art["mechanism_clamped"] == {"from": "local_err", "to": "local_error"}
+    h = _hyp(b, "chief")
+    assert h.root_cause.startswith("[local_error]")
+    assert any("local_err" in e for e in h.evidence)   # raw value on record
+
+    b2, ctx2 = _chief_scripted(" vibes ")          # no close vocabulary word
+    ChiefAttributor().run_one(b2, ctx2)
+    art2 = b2.get("attribute", "chief")
+    assert art2["mechanism"] == "unknown"
+    assert art2["mechanism_clamped"] == {"from": " vibes ", "to": "unknown"}
+    assert _hyp(b2, "chief").root_cause.startswith("[unknown]")
+
+
+def test_chief_valid_mechanism_passes_without_trace():
+    """A vocabulary mechanism passes through untouched (no clamp record)."""
+    b, ctx = _chief_scripted("executor_loop")
+    ChiefAttributor().run_one(b, ctx)
+    art = b.get("attribute", "chief")
+    assert art["mechanism"] == "executor_loop"
+    assert "mechanism_clamped" not in art
+    assert not any("clamped" in e for e in _hyp(b, "chief").evidence)
+
+
+def test_tree_diagnosis_clamps_leave_notes():
+    """tree_diagnosis step/agent/failure_mode clamps must leave a note in
+    the Hypothesis evidence (all_at_once discipline) instead of silently
+    rewriting the judge's verdict."""
+    b, _ = _bundle(ToySandbox().generate("q-trajaudit", "malformed_tool_call"),
+                   reps=())
+    ctx = RunContext(llm=FakeLLMClient(responses=[
+        StagePick(suspicious_stages=["search"]),
+        '{"responsible_agent": "ghost", "step": 999, "reason": "r",'
+        ' "fix_suggestion": "f", "confidence": 0.5, "failure_mode": "FM-9.9"}',
+    ]))
+    create("represent", "hierarchy_tree").run_one(b, ctx)
+    TreeDiagnosisAttributor().run_one(b, ctx)
+    h = _hyp(b, "tree_diagnosis")
+    assert h is not None
+    assert h.agent != "ghost" and h.agent in b.trajectory.agents()
+    assert h.root_cause_code is None               # FM-9.9 is not a MAST code
+    joined = " ".join(h.evidence)
+    assert f"step 999->{h.step}" in joined         # step clamped into [lo, end]
+    assert "'ghost'" in joined                     # agent clamped into roster
+    assert "FM-9.9" in joined and "not a MAST code" in joined
+
+
+def test_claim_audit_unknown_claim_id_recorded_in_invalid_channel():
+    """A B-audit record about a claim the ledger never saw (hallucinated
+    claim_id) must land in the invalid channel with a reason — not silently
+    vanish, and never reach the harmful-claim ranking or the Tracer
+    prompt."""
+    support = SupportRecords(records=[
+        SupportRecord(
+            claim_id="cX", support_status="MISSING",
+            verdict="harmful_unsupported_commitment", responsible_step=2,
+            reason="no support",
+        ),
+        SupportRecord(claim_id="c1", support_status="DIRECT",
+                      verdict="supported"),
+    ])
+    ctx = RunContext(llm=FakeLLMClient())
+    b, _ = _bundle(ToySandbox().generate("q-who-when", "info_withholding"))
+    create("represent", "claim_ledger").run_one(b, ctx)
+    ctx.llm = FakeLLMClient(responses=[support])
+    ClaimAuditAttributor().run_one(b, ctx)
+    art = b.get("attribute", "claim_audit")
+    # cX is the only harmful verdict, but it does not exist in the ledger:
+    # it neither becomes a hypothesis nor reaches the Tracer
+    assert art["status"] == "no_harmful_claim"
+    assert any(
+        r["claim_id"] == "cX" and r.get("reason") == "claim_id not in ledger"
+        for r in art["invalid_support_records"]
+    )
+    assert all(r["claim_id"] != "cX" for r in art["support_records"])

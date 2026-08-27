@@ -11,10 +11,28 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from atap.core.config import ConfigError
 from atap.core.schema import Trajectory
 
 if TYPE_CHECKING:
     from atap.core.bundle import TrajectoryBundle
+
+
+def _check_trace_id(trace_id: str) -> None:
+    """A trace_id becomes a directory name: it must be a single path
+    component (no '/', '\\', no '.'/'..' traversal, no NUL)."""
+    if (
+        not isinstance(trace_id, str)
+        or not trace_id
+        or "/" in trace_id
+        or "\\" in trace_id
+        or trace_id in {".", ".."}
+        or "\x00" in trace_id
+    ):
+        raise ValueError(
+            f"trace_id must be a single path component "
+            f"(no '/', '\\', '..', empty or NUL): got {trace_id!r}"
+        )
 
 
 class JSONLTraceSource:
@@ -70,6 +88,7 @@ class JSONLArtifactStore:
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def save_artifact(self, trace_id: str, stage: str, name: str, artifact: Any) -> None:
+        _check_trace_id(trace_id)
         d = self.dir / trace_id
         d.mkdir(parents=True, exist_ok=True)
         payload = artifact
@@ -94,7 +113,7 @@ class JSONLArtifactStore:
 def build_source(spec: dict):
     kind = spec.get("type", "jsonl")
     if "path" not in spec:
-        raise ValueError("source requires a path field")
+        raise ConfigError("source requires a path field")
     if kind == "jsonl":
         return JSONLTraceSource(spec["path"])
     if kind == "langfuse":
@@ -105,7 +124,7 @@ def build_source(spec: dict):
         from atap.io.otel import OTelTraceSource
 
         return OTelTraceSource(spec["path"])
-    raise ValueError(
+    raise ConfigError(
         f"unknown source type: {kind!r} (supported: jsonl / langfuse / otel)"
     )
 
@@ -118,5 +137,5 @@ def build_store(spec: dict | None, run_dir: str):
         return JSONLArtifactStore(Path(run_dir) / "artifacts")
     kind = spec.get("type", "jsonl")
     if kind != "jsonl":
-        raise ValueError(f"unknown store type: {kind!r} (supported: jsonl)")
+        raise ConfigError(f"unknown store type: {kind!r} (supported: jsonl)")
     return JSONLArtifactStore(spec.get("dir") or (Path(run_dir) / "artifacts"))

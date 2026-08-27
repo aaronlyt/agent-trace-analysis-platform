@@ -79,7 +79,7 @@ _SYSTEM = (
 _FEW_SHOT = (
     "Example (excerpt): in the trajectory, the tool call at step 10 returns "
     "an error at step 11, and the answer submitted at step 14 does not match "
-    "the task requirements —— output {\"score\": 2.5, \"summary\": "
+    "the task requirements -- output {\"score\": 2.5, \"summary\": "
     "\"submitted an unsupported answer after a failed tool call\", "
     "\"findings\": [{\"severity\": \"critical\", "
     "\"description\": \"tool call at step 10 failed\", \"step\": 10}, "

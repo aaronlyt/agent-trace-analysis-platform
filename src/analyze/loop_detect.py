@@ -264,6 +264,7 @@ class LoopDetectAnalyzer(Analyzer):
             ]
             cycles = 0
             first_idx = None
+            last_idx = None
             for i in range(len(seq) - 2):
                 a, w, b = seq[i], seq[i + 1], seq[i + 2]
                 if (
@@ -275,11 +276,13 @@ class LoopDetectAnalyzer(Analyzer):
                     cycles += 1
                     if first_idx is None:
                         first_idx = a["index"]
+                    last_idx = b["index"]   # closing read of the latest cycle
             if cycles >= osc_cycles:
                 out.append(
                     {
                         "predicate": "tool_oscillation",
                         "start_index": first_idx,
+                        "end_index": last_idx,
                         "cycles": cycles,
                         "target": tgt,
                         "evidence": [s["signature"] for s in seq][: 6],

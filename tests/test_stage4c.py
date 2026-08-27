@@ -4,6 +4,8 @@ replay infrastructure. All deterministic acceptance via the pseudo-judge."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from atap.attribute.counterfactual_replay import CounterfactualReplayAttributor
@@ -211,9 +213,13 @@ def test_dover_recovers_six_of_six_with_gt_mistake_steps():
 def test_dover_segmenter_and_trial_structure():
     sb = ToySandbox()
     b, ctx = _bundle(sb.generate("q-trajaudit", None))
-    # success trajectory: skipped explicitly
+    # success trajectory: skipped explicitly, and recovered stays False --
+    # nothing was broken, so nothing was recovered (no inflated recovery
+    # counts from trajectories that never needed recovery)
     DoVerRecoverer().run_one(b, ctx)
-    assert b.get("recover", "dover")["status"] == "skipped_success"
+    art = b.get("recover", "dover")
+    assert art["status"] == "skipped_success"
+    assert art["recovered"] is False
 
     b2, ctx2 = _bundle(sb.generate("q-trajaudit", "step_repetition"), env=sb)
     DoVerRecoverer().run_one(b2, ctx2)
@@ -297,6 +303,101 @@ def test_dover_classify_handler_rules():
     assert classify("[True, True, False]", True) == "Validated"
     assert classify("[True, False, False]", True) == "Partially"
     assert classify("[False, False, False]", False) == "Refuted"
+
+
+def test_dover_classify_handler_majority_vote_follows_n():
+    """The Validated rule is a strict majority 2*n_ok > n_repeats (paper-fixed
+    n=3 keeps the >=2/3 behavior); configurable repeat counts must be
+    honored: 2/4 successes is NOT a majority, 1/1 is."""
+    def classify(runs: str) -> str:
+        msg = [{"role": "user", "content": (
+            f"{len(runs.split(','))} replay outcomes: {runs}; "
+            f"fault removed by edit: True\nMilestones: x"
+        )}]
+        import json as _json
+        return _json.loads(pseudo_judge_handler("dover_classify", msg))["label"]
+
+    assert classify("[True, True, False, False]") == "Partially"  # 2/4: tie, not majority
+    assert classify("[True, True, True, False]") == "Validated"   # 3/4: strict majority
+    assert classify("[True]") == "Validated"                      # 1/1
+    assert classify("[False]") == "Partially"                     # 0/1 but fault removed
+
+
+def test_dover_vocab_aliases_normalize_and_reject():
+    """OutcomeLabel/Intervention are vocabulary-validated (Literal + before-
+    validator alias normalization, same policy as judge_eval's severity):
+    common judge synonyms fold to the canonical token; anything still
+    illegal is an explicit parse failure (LLMError), never a silently
+    downgraded verdict."""
+    from atap.llm.base import LLMError, parse_structured
+    from atap.recover.dover import Intervention, OutcomeLabel
+
+    # label aliases (case-insensitive)
+    for raw, want in (
+        ("Validated", "Validated"),
+        ("VALIDATED", "Validated"),
+        ("partially", "Partially"),
+        ("partially validated", "Partially"),
+        ("partially_valided", "Partially"),
+        ("Partially Valid", "Partially"),
+        ("refuted", "Refuted"),
+        ("inconclusive", "Inconclusive"),
+    ):
+        got = parse_structured(
+            json.dumps({"label": raw, "reason": "r"}), OutcomeLabel
+        ).label
+        assert got == want, raw
+    with pytest.raises(LLMError):
+        parse_structured('{"label": "mostly works", "reason": "r"}', OutcomeLabel)
+
+    # category aliases (case/space/hyphen fold to the underscore token)
+    for raw, want in (
+        ("orchestrator_ledger", "orchestrator_ledger"),
+        ("Orchestrator Instruction", "orchestrator_instruction"),
+        ("subagent-instruction", "subagent_instruction"),
+        ("SUBAGENT_INSTRUCTION", "subagent_instruction"),
+    ):
+        got = parse_structured(
+            json.dumps({"category": raw, "replacement_text": "x"}), Intervention
+        ).category
+        assert got == want, raw
+    with pytest.raises(LLMError):
+        parse_structured(
+            '{"category": "global_reset", "replacement_text": "x"}', Intervention
+        )
+
+
+def test_dover_prompts_follow_configured_n_repeats():
+    """The classify prompt must state the actual n_repeats and the majority
+    threshold derived from it (> n_repeats//2), never a hardcoded "3
+    repeats / >=2/3"; n_repeats < 1 is rejected (empty replay list would
+    otherwise IndexError on runs[0])."""
+    from atap.recover import dover as dover_mod
+
+    sb = ToySandbox()
+    b, ctx = _bundle(sb.generate("q-who-when", "info_withholding"), env=sb)
+    DoVerRecoverer(n_repeats=1).run_one(b, ctx)
+    art = b.get("recover", "dover")
+    assert art["recovered"] is True
+    assert len(b.reruns) == 1
+    classify_calls = [c for c in ctx.llm.calls if c["tag"] == "dover_classify"]
+    assert len(classify_calls) == 1
+    system = classify_calls[0]["messages"][0]["content"]
+    user = classify_calls[0]["messages"][1]["content"]
+    assert "1 repeats" in system and "more than 0 of the 1 repeats" in system
+    assert "1 replay outcomes: [True]" in user
+    assert "3 replay outcomes" not in user
+
+    # default n=3 renders the paper's >=2/3 threshold
+    rendered = dover_mod._CLASSIFY_SYSTEM.format(n_repeats=3, maj=1)
+    assert "3 repeats" in rendered and "more than 1 of the 3 repeats" in rendered
+    assert "milestone progress" not in rendered      # input carries a milestone list, not measured progress
+    assert "no measurable progress toward the milestones" in rendered  # paper-neutral Refuted wording
+
+    # n_repeats < 1: explicit rejection
+    b2, ctx2 = _bundle(sb.generate("q-who-when", "info_withholding"), env=sb)
+    with pytest.raises(ValueError, match="n_repeats"):
+        DoVerRecoverer(n_repeats=0).run_one(b2, ctx2)
 
 
 def test_dover_requires_env():

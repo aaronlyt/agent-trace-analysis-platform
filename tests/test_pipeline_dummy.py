@@ -3,15 +3,21 @@
 Validates the pluggable mechanism itself: register 5 Dummies inside the test
 (one per stage) + 1 cross-trajectory Dummy (run_corpus aggregation scope),
 compose them via YAML config, run the full pipeline and verify artifact
-persistence and execution order.
+persistence and execution order. Also guards the artifact-store surface
+(trace_id sanitization, non-JSON artifact summaries) and the Pipeline's
+explicit ``last_reruns`` state.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 import atap  # noqa: F401  import bootstraps registration
 from atap.core.base import STAGE_ORDER, StageAlgorithm
+from atap.core.bundle import TrajectoryBundle
 from atap.core.registry import register
 from atap.io.jsonl_store import JSONLArtifactStore
 from atap.runtime import run_config
@@ -96,6 +102,57 @@ def test_artifact_store_roundtrip(tmp_path):
     store.save_report("r.json", {"ok": True})
     assert json_load(tmp_path / "arts" / "t1" / "analyze__judge_eval.json") == {"score": 3.2}
     assert json_load(tmp_path / "arts" / "r.json") == {"ok": True}
+
+
+def test_artifact_store_rejects_path_like_trace_id(tmp_path):
+    """A trace_id becomes a directory name: path components ('/' / '\\' /
+    '..') must be rejected up front, not silently split into directories."""
+    store = JSONLArtifactStore(tmp_path / "arts")
+    for bad in ("a/b", "a\\b", "..", ".", "", "a/../b"):
+        with pytest.raises(ValueError, match="single path component"):
+            store.save_artifact(bad, "analyze", "x", {"ok": True})
+    assert not (tmp_path / "arts" / "a").exists()   # nothing leaked out
+
+
+def test_bundle_summary_tolerates_non_json_artifacts():
+    """summary() must not blow up on artifacts json.dumps cannot serialize
+    (default=str fallback, matching the artifact-store write path)."""
+    b = TrajectoryBundle(success_trace())
+    b.put("analyze", "weird", {"s": {1, 2, 3}})   # a set: not JSON-serializable
+    text = b.summary()
+    assert "artifact analyze/weird" in text
+
+
+def test_pipeline_last_reruns_initialized():
+    from atap.core.pipeline import Pipeline
+
+    assert Pipeline([]).last_reruns == []   # explicit state, no getattr
+
+
+def test_cli_run_prints_actual_artifacts_dir(tmp_path, capsys):
+    """The run command prints the artifact location resolved from the actual
+    store config (a redirected store.dir must be reflected, not the
+    hard-coded <out>/artifacts guess)."""
+    from atap.cli import main
+
+    traces_jsonl = write_traces_jsonl(tmp_path / "traces.jsonl", [success_trace()])
+    base = {
+        "run_name": "cli-run",
+        "source": {"type": "jsonl", "path": str(traces_jsonl)},
+        "stages": {"represent": ["canonical_events"]},
+    }
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text(json.dumps(base), encoding="utf-8")
+    out = tmp_path / "out"
+    assert main(["run", "--config", str(cfg), "--out", str(out)]) == 0
+    assert f"artifacts -> {out / 'artifacts'}" in capsys.readouterr().out
+
+    redirected = dict(base, store={"type": "jsonl", "dir": str(tmp_path / "elsewhere")})
+    cfg2 = tmp_path / "cfg2.json"
+    cfg2.write_text(json.dumps(redirected), encoding="utf-8")
+    out2 = tmp_path / "out2"
+    assert main(["run", "--config", str(cfg2), "--out", str(out2)]) == 0
+    assert f"artifacts -> {tmp_path / 'elsewhere'}" in capsys.readouterr().out
 
 
 def json_load(p: Path):

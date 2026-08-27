@@ -21,6 +21,7 @@ determines the recovery success rate, which is deliberate.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any
 
 from atap.core.schema import Outcome, TraceEvent, Trajectory
@@ -146,6 +147,10 @@ def execute(
             payload={},  # malformed call: missing the query argument
             refs=[hs],
         )
+        # onset: the malformed search call (saved explicitly -- the ``call``
+        # name is reused by the submit call below, so a spans index would be
+        # the only alternative and breaks if any span is inserted earlier)
+        malformed_call_sid = call
         n_tool_calls += 1
         res = rec.add(
             "search_result", "TOOL_RESULT", "env", action="search", phase="search",
@@ -176,7 +181,7 @@ def execute(
         ok, note = env.verify(task_id, answer, read_docs)
         rec.add("verify", "VERIFIER", "verifier", refs=[call], payload={"content": note})
         rec.add("end", "TASK_END", "env")
-        onset_sid = rec.spans[3]["id"]  # first deviation: the malformed search call
+        onset_sid = malformed_call_sid  # first deviation: the malformed search call
         return _finish(rec, task_id, fault, onset_sid, ok, note, meta_overrides)
 
     # ---- retrieval detour (RG last-hop target scenario, phase-four extended fault) ----
@@ -510,15 +515,15 @@ class ToySandbox:
         )
 
     def generate_population(self, seed: int = 0) -> list[Trajectory]:
-        """Demo population: 1 success per task + 1 trace for each of the six
-        faults (rotated across tasks)."""
+        """Demo population: 1 success trace + 1 trace for each of the six
+        faults (7 traces in total, rotated across tasks)."""
         import random
 
         rng = random.Random(seed)
         traces: list[Trajectory] = []
         task_ids = list(env.TASKS)
         for i, kind in enumerate(["__ok__", *FAULTS]):
-            task_id = task_ids[(i if kind == "__ok__" else i) % len(task_ids)]
+            task_id = task_ids[i % len(task_ids)]
             traces.append(
                 self.generate(task_id, None if kind == "__ok__" else kind)
             )
@@ -620,7 +625,10 @@ class ToySandbox:
             raise ValueError(f"trajectory {trajectory.trace_id} has no task_id; cannot re-solve")
         inj = trajectory.meta.get("injected_fault") or {}
         fault_kind = inj.get("kind")
-        fault = FAULTS.get(fault_kind) if fault_kind else None
+        # ALL_FAULTS: feedback lookup covers the extended registry too
+        # (retrieval_detour / agent_deadlock), so a fault-naming feedback can
+        # remove them instead of falling into unexplained_failure
+        fault = ALL_FAULTS.get(fault_kind) if fault_kind else None
         # guard: if the original failure was not caused by an injected fault
         # (e.g. a real failure cause was wired in), a clean rerun necessarily
         # succeeds -- that must not be claimed as "recovery"; treat the fault
@@ -641,7 +649,10 @@ class ToySandbox:
                 note=new_run["outcome"]["note"] if not fault_active else trajectory.outcome.note,
             ),
             meta={
-                **{k: v for k, v in trajectory.meta.items() if k != "injected_fault"},
+                # qrels shallow-copied: the re-solve meta must not share the
+                # original trajectory's mutable dict
+                **{k: dict(v) if k == "qrels" else v
+                   for k, v in trajectory.meta.items() if k != "injected_fault"},
                 "rerun_of": trajectory.trace_id,
                 "resolve_mode": "full_reresolve",
                 "fault_removed": removed,
@@ -683,7 +694,8 @@ class ToySandbox:
             raise ValueError(f"trajectory {trajectory.trace_id} has no task_id; cannot replay")
         inj = trajectory.meta.get("injected_fault") or {}
         fault_kind = inj.get("kind")
-        fault = FAULTS.get(fault_kind) if fault_kind else None
+        # ALL_FAULTS: same extended-registry coverage as resolve/replay_intervene
+        fault = ALL_FAULTS.get(fault_kind) if fault_kind else None
         unexplained_failure = fault is None and not trajectory.outcome.success
 
         removed = fault is not None and self._feedback_addresses(fault_kind, feedback)
@@ -699,42 +711,51 @@ class ToySandbox:
         clamped = not (0 <= step < len(flat))
         if clamped:
             step = max(0, min(int(step), len(flat) - 1, len(trajectory.events) - 1))
-        logical = flat[step]["logical"] if 0 <= step < len(flat) else None
 
         new_run = execute(task_id, None if removed else fault)
         new_flat = self._flatten_spans(new_run["spans"])
+        suffix_start, alignment = self._align_suffix_start(flat, step, new_flat)
 
-        prefix = [ev for ev in trajectory.events[:step]]
-        suffix_start = next(
-            (i for i, s in enumerate(new_flat) if s["logical"] == logical), 0
-        )
+        # copy the retained prefix events: the rerun must not alias the
+        # original trajectory's event objects (the closed-loop verification
+        # round normalizes rerun events in place via canonical_events
+        # _normalize, which would rewrite the original's id/index otherwise)
+        prefix = [replace(ev) for ev in trajectory.events[:step]]
         merged = list(prefix)
+        bridge = self._prefix_bridge(flat, trajectory, step)
+        new_pos = {s["id"]: i for i, s in enumerate(new_flat)}
+        suffix_eid = {
+            s["id"]: f"e{step + k:03d}"
+            for k, s in enumerate(new_flat[suffix_start:])
+        }
+        dropped_refs = 0
         last_call_id: str | None = prefix[-1].id if prefix else None
         for k, span in enumerate(new_flat[suffix_start:]):
             idx = step + k
             eid = f"e{idx:03d}"
-            ev = span  # schema construction reused below
-            from atap.core.schema import TraceEvent
-
-            refs: list[str] = []
-            if ev["kind"] == "TOOL_RESULT" and last_call_id:
-                refs = [last_call_id]
-            elif ev["kind"] == "VERIFIER" and last_call_id:
-                refs = [last_call_id]
+            refs, dropped = self._suffix_refs(
+                span, new_flat=new_flat, new_pos=new_pos,
+                suffix_start=suffix_start, suffix_eid=suffix_eid,
+                bridge=bridge, last_call_id=last_call_id,
+            )
+            dropped_refs += dropped
             event = TraceEvent(
-                id=eid, ts=float(idx), kind=ev["kind"], agent=ev["agent"],
-                action=ev["action"], payload=ev["payload"], refs=refs,
-                phase=ev["phase"], parent=None, index=idx,
+                id=eid, ts=float(idx), kind=span["kind"], agent=span["agent"],
+                action=span["action"], payload=span["payload"], refs=refs,
+                phase=span["phase"], parent=None, index=idx,
             )
             merged.append(event)
-            if ev["kind"] == "TOOL_CALL":
+            if span["kind"] == "TOOL_CALL":
                 last_call_id = eid
 
         self._rr_counter += 1
-        # with no fault (fault is None) the new run is the final shape; with a
-        # fault not named by the feedback the fault remains; if the original
-        # failure was not caused by an injected fault, treat the fault as
-        # still present (same guard as resolve)
+        # fault lookup spans ALL_FAULTS (six standard + two extended), so a
+        # feedback naming an extended fault (retrieval_detour /
+        # agent_deadlock) removes it; the fault remains only when it exists
+        # but the feedback does not name it. unexplained_failure applies only
+        # to failures caused by no injected fault at all -- a clean rerun of
+        # those would succeed and must not be claimed as recovery (same guard
+        # as resolve)
         fault_active = (fault is not None and not removed) or unexplained_failure
         note = new_run["outcome"]["note"] if not fault_active else trajectory.outcome.note
         return Trajectory(
@@ -747,10 +768,15 @@ class ToySandbox:
                 note=note,
             ),
             meta={
-                **{k: v for k, v in trajectory.meta.items() if k != "injected_fault"},
+                # qrels shallow-copied: the rerun meta must not share the
+                # original trajectory's mutable dict
+                **{k: dict(v) if k == "qrels" else v
+                   for k, v in trajectory.meta.items() if k != "injected_fault"},
                 "rerun_of": trajectory.trace_id,
                 "rerun_from_step": step,
                 "step_clamped": clamped,
+                "suffix_alignment": alignment,
+                "dropped_refs": dropped_refs,
                 "fault_removed": removed,
                 "feedback_snippet": feedback[:200],
             },
@@ -816,7 +842,6 @@ class ToySandbox:
         clamped = not (0 <= step < len(flat))
         if clamped:
             step = max(0, min(int(step), len(flat) - 1, len(trajectory.events) - 1))
-        logical = flat[step]["logical"] if 0 <= step < len(flat) else None
 
         # step-sensitivity gate: the middleware consumes the edit only when
         # the intervention lands on the fault's onset step (computed after
@@ -836,9 +861,7 @@ class ToySandbox:
 
         new_run = execute(task_id, None if removed else fault)
         new_flat = self._flatten_spans(new_run["spans"])
-        suffix_start = next(
-            (i for i, s in enumerate(new_flat) if s["logical"] == logical), 0
-        )
+        suffix_start, alignment = self._align_suffix_start(flat, step, new_flat)
         suffix = new_flat[suffix_start:]
         if horizon is not None:
             suffix = suffix[: int(horizon)]
@@ -861,6 +884,10 @@ class ToySandbox:
             )
         )
 
+        bridge = self._prefix_bridge(flat, trajectory, step)
+        new_pos = {s["id"]: i for i, s in enumerate(new_flat)}
+        suffix_eid = {s["id"]: f"e{step + k:03d}" for k, s in enumerate(suffix)}
+        dropped_refs = 0
         results: list[Trajectory] = []
         for r in range(n_repeats):
             self._rr_counter += 1
@@ -874,9 +901,12 @@ class ToySandbox:
                 # content is exactly the edit text
                 if k == 0 and span["kind"] in ("LLM_CALL", "HANDOFF", "AGENT_MESSAGE"):
                     payload["content"] = edit_text[:400]
-                refs: list[str] = []
-                if span["kind"] in ("TOOL_RESULT", "VERIFIER") and last_call_id:
-                    refs = [last_call_id]
+                refs, dropped = self._suffix_refs(
+                    span, new_flat=new_flat, new_pos=new_pos,
+                    suffix_start=suffix_start, suffix_eid=suffix_eid,
+                    bridge=bridge, last_call_id=last_call_id,
+                )
+                dropped_refs += dropped
                 ev = TraceEvent(
                     id=eid, ts=float(idx), kind=span["kind"], agent=span["agent"],
                     action=span.get("action"), payload=payload, refs=refs,
@@ -909,6 +939,8 @@ class ToySandbox:
                     "replay_mode": "message_intervention",
                     "intervened_step": step,
                     "step_clamped": clamped,
+                    "suffix_alignment": alignment,
+                    "dropped_refs": dropped_refs,
                     "intervention_applied": applied,
                     "intervention_applied_note": applied_note,
                     "intervention_on_onset_step": onset_targeted,
@@ -932,7 +964,7 @@ class ToySandbox:
             return True
         if self._llm is None:
             return False
-        fault = FAULTS.get(fault_kind)
+        fault = ALL_FAULTS.get(fault_kind)
         messages = [
             {
                 "role": "user",
@@ -950,6 +982,101 @@ class ToySandbox:
         if first in ("yes", "no"):
             return first == "yes"
         return "yes" in ans
+
+    # -- replay internals ------------------------------------------------------
+
+    @staticmethod
+    def _align_suffix_start(
+        orig_flat: list[dict], step: int, new_flat: list[dict]
+    ) -> tuple[int, str]:
+        """Where the re-executed rollout's suffix begins, aligned with the
+        original logical step at ``step``. Returns (suffix_start, alignment).
+
+        The logical step at ``step`` may exist only in the faulted script
+        (e.g. the repeated search of step_repetition): after fault removal
+        the new rollout has no such step, and blindly falling back to 0
+        splices a whole second rollout behind the retained prefix (duplicate
+        TASK_START / doubled event stream). Alignment ladder [adaptation:
+        the replay papers do not specify re-alignment when the replayed-from
+        step vanishes in the corrected run]:
+        (a) "exact": first new step with the same logical name;
+        (b) "next_surviving": the first logical of the original suffix
+            (orig_flat[step:]) that still exists in the new rollout;
+        (c) "phase": first new step in the same phase as orig_flat[step]
+            (only when that phase is a real label -- TASK_START/TASK_END
+            carry None and would match each other);
+        (d) "empty": empty suffix -- never splice a duplicate rollout.
+        """
+        if not (0 <= step < len(orig_flat)) or not new_flat:
+            return len(new_flat), "empty"
+        logical = orig_flat[step]["logical"]
+        for i, s in enumerate(new_flat):
+            if s["logical"] == logical:
+                return i, "exact"
+        for cand in orig_flat[step:]:
+            hit = next(
+                (i for i, s in enumerate(new_flat) if s["logical"] == cand["logical"]),
+                None,
+            )
+            if hit is not None:
+                return hit, "next_surviving"
+        phase = orig_flat[step].get("phase")
+        if phase is not None:
+            for i, s in enumerate(new_flat):
+                if s.get("phase") == phase:
+                    return i, "phase"
+        return len(new_flat), "empty"
+
+    @staticmethod
+    def _prefix_bridge(
+        orig_flat: list[dict], trajectory: Trajectory, step: int
+    ) -> dict[str, str]:
+        """logical step name -> retained-prefix event id. Both the original
+        trajectory's event stream and the re-executed ``orig_flat`` are
+        pre-order flattenings of the same deterministic rollout, so positions
+        i < step carry the same logical steps and their ids can be bridged."""
+        return {
+            orig_flat[i]["logical"]: trajectory.events[i].id
+            for i in range(min(step, len(orig_flat), len(trajectory.events)))
+        }
+
+    @staticmethod
+    def _suffix_refs(
+        span: dict,
+        *,
+        new_flat: list[dict],
+        new_pos: dict[str, int],
+        suffix_start: int,
+        suffix_eid: dict[str, str],
+        bridge: dict[str, str],
+        last_call_id: str | None,
+    ) -> tuple[list[str], int]:
+        """Semantic refs (span-id references on the span itself) -> new event
+        ids for a replayed suffix event. A ref target inside the suffix maps
+        directly via ``suffix_eid``; a target before the suffix maps through
+        the logical-name ``bridge`` onto the retained prefix's event ids
+        (replay keeps the original prefix, not the new rollout's prefix);
+        unmappable targets are dropped and counted. The legacy
+        TOOL_RESULT/VERIFIER -> last tool-call fallback applies only when the
+        span carries no refs of its own. Returns (refs, n_dropped)."""
+        refs: list[str] = []
+        dropped = 0
+        for r in span.get("refs") or []:
+            pos = new_pos.get(r)
+            if pos is None:
+                dropped += 1
+                continue
+            if pos >= suffix_start:
+                eid = suffix_eid.get(r)
+            else:
+                eid = bridge.get(new_flat[pos]["logical"])
+            if eid is None:
+                dropped += 1
+                continue
+            refs.append(eid)
+        if not refs and span["kind"] in ("TOOL_RESULT", "VERIFIER") and last_call_id:
+            refs = [last_call_id]
+        return refs, dropped
 
     @staticmethod
     def _flatten_spans(roots: list[dict]) -> list[dict]:

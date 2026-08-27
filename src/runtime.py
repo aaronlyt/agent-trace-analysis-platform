@@ -11,7 +11,7 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
-from atap.core.config import PipelineConfig, validate_against_registry
+from atap.core.config import ConfigError, PipelineConfig, validate_against_registry
 from atap.core.context import RunContext
 from atap.core.pipeline import Pipeline, PipelineReport
 from atap.core.registry import create
@@ -58,7 +58,7 @@ def build_context(
             # model, see plan.md)
             ctx.env = ToySandbox(llm=ctx.llm)
         else:
-            raise ValueError(f"unknown sandbox type: {kind!r} (available: toy)")
+            raise ConfigError(f"unknown sandbox type: {kind!r} (available: toy)")
     return ctx
 
 
@@ -71,6 +71,11 @@ def run_config(
 ) -> tuple[list, list[PipelineReport]]:
     """Full execution: read trajectories → orchestrate (optional closed
     loop) → persist artifacts/reports.
+
+    report.json: the persisted counts are round-inclusive totals (with
+    ``closed_loop`` on, ``n_traces``/``n_failures`` sum the initial round
+    and the verification round); ``n_traces_by_round`` /
+    ``n_failures_by_round`` break them down per round.
 
     Unified logging: this function automatically attaches
     ``<run_dir>/run.log`` (process log) and ``<run_dir>/llm_calls.jsonl``
@@ -116,7 +121,13 @@ def run_config(
             merged.n_rerun_success += r.n_rerun_success
             merged.stage_log.extend(r.stage_log)
             merged.bundle_summaries.extend(r.bundle_summaries)
-        ctx.store.save_report("report.json", merged)
+        payload = merged.to_dict()
+        # n_traces/n_failures above are round-inclusive totals (initial +
+        # verification round): the *_by_round lists break them down per round
+        # so a closed-loop run is not double-counted as a bigger corpus
+        payload["n_traces_by_round"] = [r.n_traces for r in reports]
+        payload["n_failures_by_round"] = [r.n_failures for r in reports]
+        ctx.store.save_report("report.json", payload)
     for line in merged_stage_log(reports):
         log.info("stage %s", line)
     log.info(

@@ -10,7 +10,12 @@ during the rerun.
 
 This implementation: t* and the feedback come from the top Hypothesis of
 the attribution output (consumes the unified attribution contract, unaware
-of the concrete attribution algorithm). UpdateFeedback is a weakened
+of the concrete attribution algorithm). Param ``attribution`` [inference]:
+when several attribution algorithms are configured in the same pipeline,
+``confidence`` has no global scale across algorithms, so an explicit
+``attribution=<algorithm name>`` declares which algorithm's Hypotheses
+(matched against ``Hypothesis.source``) this recoverer consumes; unset =
+consume all. UpdateFeedback is a weakened
 version: plain string concatenation (attempt number + failure note +
 re-pointing at step t*), without any LLM re-analysis of the latest failed
 trajectory -- rounds 2..5 may repeat the same failure note and the feedback
@@ -51,18 +56,32 @@ class TargetedRerunRecoverer(Recoverer):
         if bundle.succeeded:
             return
         hyps = bundle.hypotheses()
+        attribution = self.param("attribution", None)
+        if attribution is not None:
+            # [inference] confidence has no global scale when multiple
+            # attribution algorithms are configured together: an explicit
+            # ``attribution`` param declares which algorithm's output this
+            # recoverer consumes (Hypothesis.source; defensive getattr --
+            # the field may be absent on older Hypothesis payloads)
+            hyps = [h for h in hyps if getattr(h, "source", "") == attribution]
         if not hyps:
+            note = (
+                "failed trajectory has no attribution output: recovery must "
+                "consume attribution (broken-link warning in literature §7)"
+            )
+            if attribution is not None:
+                note += f" (attribution filter: no hypothesis with source={attribution!r})"
             bundle.put(
                 "recover", self.name,
                 {"status": "skipped_no_hypothesis", "recovered": False,
-                 "note": "failed trajectory has no attribution output: recovery must consume attribution (broken-link warning in literature §7)"},
+                 "attribution": attribution, "note": note},
             )
             return
         if ctx.env is None:
             bundle.put(
                 "recover", self.name,
                 {"status": "no_replay_environment", "recovered": False,
-                 "note": "RunContext.env is not configured (sandbox: {type: toy})"},
+                 "note": "RunContext.env is not configured (sandbox.type=toy provides one)"},
             )
             return
 
@@ -101,6 +120,7 @@ class TargetedRerunRecoverer(Recoverer):
                 "origin": bundle.trace_id,
                 "t_star": top.step,
                 "responsible_agent": top.agent,
+                "attribution": attribution,
                 "feedback_seed": (top.fix_suggestion or top.root_cause)[:200],
                 "rounds": len(attempts),
                 "attempts": attempts,

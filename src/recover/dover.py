@@ -67,12 +67,12 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from atap.core.registry import register
 from atap.core.render import judge_view
-from atap.core.schema import Hypothesis
 from atap.recover.base import Recoverer
 
 # The edit text is consumed by environment-side middleware keyed on fault
@@ -139,12 +139,28 @@ class TrialFailure(BaseModel):
 
 
 class Intervention(BaseModel):
-    category: str = Field(
+    category: Literal[
+        "orchestrator_ledger", "orchestrator_instruction", "subagent_instruction"
+    ] = Field(
         description="orchestrator_ledger | orchestrator_instruction | "
                     "subagent_instruction"
     )
     replacement_text: str = Field(description="Minimal edit text that replaces the step's message in place")
     rationale: str = ""
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _norm_category(cls, v):
+        # Normalize common judge spellings (case-insensitive, hyphen/space
+        # variants folded to the underscore token); any other value is an
+        # explicit parse failure (LLMError upstream), never silently trusted
+        # -- same policy as judge_eval's severity handling.
+        token = re.sub(r"[\s\-]+", "_", str(v).strip().lower())
+        return {
+            "orchestrator_ledger": "orchestrator_ledger",
+            "orchestrator_instruction": "orchestrator_instruction",
+            "subagent_instruction": "subagent_instruction",
+        }.get(token, v)
 
 
 class Milestones(BaseModel):
@@ -153,11 +169,29 @@ class Milestones(BaseModel):
     )
 
 
+# Normalize common judge synonyms (any other value is explicitly rejected by
+# Literal validation -- same policy as judge_eval's severity handling)
+_OUTCOME_LABEL_ALIAS = {
+    "validated": "Validated",
+    "partially": "Partially",
+    "partially valid": "Partially",
+    "partially validated": "Partially",
+    "partially_valided": "Partially",
+    "refuted": "Refuted",
+    "inconclusive": "Inconclusive",
+}
+
+
 class OutcomeLabel(BaseModel):
-    label: str = Field(
+    label: Literal["Validated", "Partially", "Refuted", "Inconclusive"] = Field(
         description="Validated | Partially | Refuted | Inconclusive"
     )
     reason: str
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _norm_label(cls, v):
+        return _OUTCOME_LABEL_ALIAS.get(str(v).strip().lower(), v)
 
 
 _SEGMENT_SYSTEM = (
@@ -190,13 +224,20 @@ _MILESTONE_SYSTEM = (
     "milestones that can be decided from the trajectory (abstracted to the "
     "outcome level, without concrete tool operations). Output JSON."
 )
+# Template: the majority threshold and repeat count follow the configured
+# n_repeats (strict majority > n_repeats//2; for the default n=3 this is the
+# paper's >=2/3) -- never a hardcoded "3 repeats / >=2/3" when n_repeats is
+# configurable. [adaptation] the input's milestone part is a list to check
+# progress against, not measured progress values (the paper's Prog values are
+# not implemented offline, see the module docstring).
 _CLASSIFY_SYSTEM = (
     "You are an intervention outcome classifier. Given the original "
-    "trajectory, intervention details and replay results (success/failure of "
-    "the 3 repeats and milestone progress), classify: Validated (≥2/3 "
-    "success) / Partially (faithful execution and progress ≥20%) / Refuted "
-    "(faithful execution yet no progress -- hypothesis invalid) / "
-    "Inconclusive. Output JSON."
+    "trajectory, intervention details and replay results (the success/"
+    "failure list of the {n_repeats} repeats and the milestone list), "
+    "classify: Validated (more than {maj} of the {n_repeats} repeats "
+    "succeed) / Partially (faithful execution and progress >= 20%) / "
+    "Refuted (faithful execution yet no measurable progress toward the "
+    "milestones) / Inconclusive. Output JSON."
 )
 
 
@@ -213,8 +254,10 @@ class DoVerRecoverer(Recoverer):
                 f"canonical_events first"
             )
         if bundle.succeeded:
+            # recovered stays False: nothing was broken, so nothing was
+            # recovered (same semantics as targeted_rerun's silent skip)
             bundle.put("recover", self.name, {"status": "skipped_success",
-                                              "recovered": True})
+                                              "recovered": False})
             return
         if ctx.llm is None:
             raise RuntimeError("dover requires an LLM client (RunContext.llm)")
@@ -230,6 +273,11 @@ class DoVerRecoverer(Recoverer):
 
         view = judge_view(bundle)
         n_repeats = int(self.param("n_repeats", 3))
+        if n_repeats < 1:
+            raise ValueError(
+                f"{bundle.trace_id}: dover n_repeats must be >= 1 "
+                f"(got {n_repeats})"
+            )
 
         # ---- ① Trial Segmenter ----
         r1 = ctx.llm.complete(
@@ -324,7 +372,7 @@ class DoVerRecoverer(Recoverer):
             itv = r3.parsed
             assert isinstance(itv, Intervention)
 
-            # ---- ④ checkpoint replay ×3 (in-place message replacement, run to the end) ----
+            # ---- ④ checkpoint replay x n_repeats (in-place message replacement, run to the end) ----
             runs = replay(
                 t, int(failure.mistake_step_index), itv.replacement_text,
                 n_repeats=n_repeats,
@@ -335,15 +383,19 @@ class DoVerRecoverer(Recoverer):
             removed = bool(runs[0].meta.get("fault_removed"))
 
             # ---- ⑥ Outcome Classifier ----
+            classify_system = _CLASSIFY_SYSTEM.format(
+                n_repeats=n_repeats, maj=n_repeats // 2
+            )
             r6 = ctx.llm.complete(
                 [
-                    {"role": "system", "content": _CLASSIFY_SYSTEM},
+                    {"role": "system", "content": classify_system},
                     {"role": "user", "content": (
                         f"Task: {t.task}\nOriginal trajectory outcome: "
                         f"{t.outcome.note[:120]}\nIntervention: category="
                         f"{itv.category}, replacement="
                         f"{_redact_fault_names(itv.replacement_text[:120])}\n"
-                        f"3 replay outcomes: {[r.outcome.success for r in runs]}; "
+                        f"{n_repeats} replay outcomes: "
+                        f"{[r.outcome.success for r in runs]}; "
                         f"fault removed by edit: {removed}\nMilestones: {milestones}"
                     )},
                 ],
@@ -371,25 +423,6 @@ class DoVerRecoverer(Recoverer):
             if label.label in ("Validated", "Partially") and runs and runs[-1].outcome.success:
                 recovered = True
 
-        hyp = None
-        for a in attempts:
-            if a.get("mistake"):
-                hyp = Hypothesis(
-                    agent=a["mistake"]["agent"] or "unknown",
-                    step=int(a["mistake"]["step"]),
-                    root_cause=(
-                        f"[do-then-verify {a['verdict']}] {a['mistake']['reason']}"
-                    ),
-                    evidence=[
-                        f"intervention={a['intervention']['category']}: "
-                        f"{a['intervention']['replacement']}",
-                        f"replay_success={a['replay_success']}/{n_repeats}, "
-                        f"verdict={a['verdict']}",
-                    ],
-                    fix_suggestion=a["intervention"]["replacement"],
-                    confidence=0.7 if a["verdict"] == "Validated" else 0.5,
-                )
-                break
         bundle.put(
             "recover",
             self.name,

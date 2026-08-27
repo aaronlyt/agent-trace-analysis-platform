@@ -6,14 +6,19 @@ LLM-free — "decided by qrels rather than an LLM judge"):
   set for deriving gold (known by construction in this sandbox, carried via
   ``meta["qrels"]`` — a data dependency, not a code dependency);
 * **episode segmentation**: each episode runs from one search call up to the
-  next search;
+  next search; reads issued **before the first search** open an implicit
+  leading episode with no search anchor (flagged ``implicit`` in the
+  artifact, ``start_index`` = the opening read call) [adaptation] —
+  otherwise such reads would enter visit_precision's denominator yet belong
+  to no R_k, i.e. they would never reach C_M (two inconsistent scopes);
 * **set operations**: R_k = doc ids returned by search/visit within episode k
   (exact match against E, "regardless of surface relatedness"); C_k=∪_{j≤k}R_j;
   Δ_k=C_k∖C_{k−1}; G*=C_M∩G(q); first gold hit = min{k:G_k*≠∅} (artifact
   note: the ``first_gold_hit`` field stores the R0 **event index** of the
-  search call that opens the first gold-hitting episode, not the episode
-  number; ``k_star`` is likewise 0-based, while ``wasted_tail`` is already
-  converted to the paper's 1-based M−k*);
+  search call that opens the first gold-hitting episode — or, when that
+  episode is the implicit pre-search one, the index of its opening read call
+  — not the episode number; ``k_star`` is likewise 0-based, while
+  ``wasted_tail`` is already converted to the paper's 1-based M−k*);
 * **decision rules**: success → correct; failure ∧ G*=∅ → **RG**
   (C_M∩E=∅ → directional, otherwise last-hop); failure ∧ G*≠∅ → **UG**
   (G*=G → true-extraction, otherwise boundary);
@@ -40,7 +45,17 @@ not executable, so taking the first search is more robust [adaptation:
 deviation from the contract in plan_stage_four.md]. A step_repetition-type UG
 maps onto the compose step rather than the first repeated step (the repeated
 calls were never "utilized") — recorded as a mapping boundary; the
-trajectory-level label is unaffected. The success decision uses the sandbox
+trajectory-level label is unaffected. confidence=1.0 carries two layers
+[declared]: the trajectory-level RG/UG label is qrels-decided and
+deterministic — the 1.0 expresses **that** layer; the agent/step mapping
+onto R0 events is a keyword heuristic (first-search / contradiction
+patterns) and may misplace, so the scalar must not be read as
+step-localization certainty. UG fallback boundary [declared]: when gold has
+surfaced but no LLM_CALL follows it (and no contradiction fired), the
+fallback target is the last event whose agent != "env" (such a trace's
+utilization failure still has a non-environment actor); only an all-env
+trace falls back to events[0] — TASK_START is env-owned, mirroring the
+declared s*=0 boundary of binary_search's walk-back. The success decision uses the sandbox
 verifier result (trajectory outcome) in place of the paper's GPT-4o binary
 answer judgment [adaptation: determinism].
 """
@@ -107,6 +122,22 @@ class RGUGAttributor(Attributor):
                 }
                 episodes.append(current)
                 continue
+            if (
+                current is None and not episodes
+                and ev.kind == "TOOL_CALL" and (ev.action or "") == "read_doc"
+                and _DOC_ID_RE.fullmatch(str(ev.payload.get("doc_id", "")))
+            ):
+                # implicit pre-search episode: a read before the first search
+                # belongs to no search-anchored episode, yet it still enters
+                # visit_precision's denominator — open a leading episode with
+                # no search anchor so the read also enters C_M [adaptation,
+                # declared in the module docstring]
+                current = {
+                    "k": len(episodes), "start_index": ev.index,
+                    "agent": ev.agent, "docs": [], "events": [],
+                    "implicit": True,
+                }
+                episodes.append(current)
             if current is not None:
                 current["events"].append(ev)
             if ev.kind == "TOOL_RESULT" and (ev.action or "") == "search":
@@ -215,7 +246,9 @@ class RGUGAttributor(Attributor):
                 root_cause_code="retrieval_gap",
                 responsible_side="model",
                 evidence=[
-                    f"[{target.index}] {target.agent} search "
+                    # render the target event's actual kind — the no-search
+                    # fallback targets an LLM_CALL decision, not a search
+                    f"[{target.index}] {target.agent} {target.kind} "
                     f"{dict(target.payload)}",
                     f"C_M={sorted(c_m)} G*={sorted(g_star)}",
                 ],
@@ -255,8 +288,16 @@ class RGUGAttributor(Attributor):
                         ev, g_star, gold,
                         f"assertively cited unread documents {sorted(unread)}", content,
                     )
+        if fallback is None:
+            # no decision step after gold surfaced: prefer the last
+            # non-environment event (declared boundary, module docstring);
+            # only an all-env trace falls back to events[0] (TASK_START is
+            # env-owned — mirrors binary_search's declared s*=0 boundary)
+            fallback = next(
+                (e for e in reversed(events) if e.agent != "env"), events[0]
+            )
         return self._ug_hypothesis(
-            fallback or events[0], g_star, gold,
+            fallback, g_star, gold,
             "gold evidence was retrieved but never properly utilized", "",
         )
 

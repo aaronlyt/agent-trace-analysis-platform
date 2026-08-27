@@ -3,6 +3,8 @@ recovery / skipped without attribution / no environment)."""
 
 from __future__ import annotations
 
+import pytest
+
 from atap.attribute.all_at_once import AllAtOnceAttributor
 from atap.core.bundle import TrajectoryBundle
 from atap.core.context import RunContext
@@ -80,7 +82,12 @@ def test_targeted_rerun_needs_env():
     b, ctx = _failed_bundle()
     ctx.env = None
     TargetedRerunRecoverer().run_one(b, ctx)
-    assert b.get("recover", "targeted_rerun")["status"] == "no_replay_environment"
+    art = b.get("recover", "targeted_rerun")
+    assert art["status"] == "no_replay_environment"
+    # the note is real prose, not an unformatted "(sandbox: {type: toy})"
+    # literal-braces leftover
+    assert "sandbox.type=toy" in art["note"]
+    assert "{type" not in art["note"]
 
 
 def test_targeted_rerun_skips_success_trace():
@@ -88,3 +95,76 @@ def test_targeted_rerun_skips_success_trace():
     b = TrajectoryBundle(t)
     TargetedRerunRecoverer().run_one(b, RunContext(env=ToySandbox()))
     assert not b.has("recover", "targeted_rerun")
+
+
+def _seed_hypotheses(b, hyps):
+    """Attach raw Hypothesis objects as an attribution artifact (bypasses
+    bundle.put's to_dict expansion so source attributes survive
+    bundle.hypotheses()'s pass-through for non-dict entries)."""
+    b.artifacts.setdefault("attribute", {})["seed"] = {"hypotheses": hyps}
+
+
+def _with_source(h, source):
+    """Set Hypothesis.source defensively: the field is owned by the
+    attribution layer; until it lands, dynamic assignment on the plain
+    dataclass stands in for it (skip if it ever becomes slotted)."""
+    try:
+        h.source = source
+        return h
+    except AttributeError:  # pragma: no cover -- future slotted Hypothesis
+        pytest.skip("Hypothesis does not accept a source attribute yet")
+
+
+def test_targeted_rerun_filters_hypotheses_by_attribution_source():
+    """Param attribution= declares which attribution algorithm's Hypotheses
+    the recoverer consumes (confidence has no global scale when several
+    attribution algorithms are configured together)."""
+    b, ctx = _failed_bundle()
+    gt = b.trajectory.meta["injected_fault"]
+    keep = _with_source(
+        Hypothesis(agent="searcher", step=gt["step"], root_cause="r1",
+                   fix_suggestion="Avoid info_withholding: report the "
+                                  "retrieved documents faithfully.",
+                   confidence=0.6),
+        "algo_keep",
+    )
+    drop = _with_source(
+        Hypothesis(agent="searcher", step=1, root_cause="r2",
+                   fix_suggestion="vague", confidence=0.99),
+        "algo_drop",
+    )
+    _seed_hypotheses(b, [keep, drop])
+
+    TargetedRerunRecoverer(attribution="algo_keep").run_one(b, ctx)
+    art = b.get("recover", "targeted_rerun")
+    assert art["recovered"] is True
+    assert art["t_star"] == gt["step"]  # the 0.99-confidence step from the
+    assert art["attribution"] == "algo_keep"  # other algorithm is not consumed
+
+    # a filter that matches nothing degrades explicitly (no silent fallthrough
+    # to the unfiltered maximum)
+    b2, ctx2 = _failed_bundle()
+    _seed_hypotheses(b2, [keep, drop])
+    TargetedRerunRecoverer(attribution="algo_missing").run_one(b2, ctx2)
+    art2 = b2.get("recover", "targeted_rerun")
+    assert art2["status"] == "skipped_no_hypothesis"
+    assert art2["recovered"] is False
+    assert "algo_missing" in art2["note"]
+    assert b2.reruns == []
+
+    # unset (default) keeps the consume-all behavior
+    b3, ctx3 = _failed_bundle()
+    _seed_hypotheses(b3, [keep, drop])
+    TargetedRerunRecoverer().run_one(b3, ctx3)
+    assert b3.get("recover", "targeted_rerun")["t_star"] == 1  # unfiltered max confidence
+
+
+def test_recovery_environment_protocol_documents_three_sides():
+    """recover/base.py's RecoveryEnvironment protocol pins the three replay
+    execution sides (rerun_from / resolve / replay_intervene) consumed by
+    the recover algorithms; the sandbox implements all three."""
+    from atap.recover.base import RecoveryEnvironment
+
+    for meth in ("rerun_from", "resolve", "replay_intervene"):
+        assert hasattr(RecoveryEnvironment, meth)
+    assert isinstance(ToySandbox(), RecoveryEnvironment)

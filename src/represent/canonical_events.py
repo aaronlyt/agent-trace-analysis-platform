@@ -20,8 +20,14 @@ sandbox/Langfuse adapters); this algorithm is responsible for:
   ``GENERATION`` → LLM_CALL), any other unknown kind falls back to
   AGENT_MESSAGE (the most neutral agent-side member: excluded from R5 action
   signatures, so spectra gain no fabricated action classes; still an acting
-  event for binary_search walk-back); remaps are counted as
-  ``remapped_kinds`` [adaptation];
+  event for binary_search walk-back); alias/fallback admissions are counted
+  as ``remapped_kinds``, while a value that is in-vocab after **pure
+  case/whitespace normalization** (``tool_call`` → TOOL_CALL) is not counted
+  [adaptation];
+* a span node missing the ``id`` key raises an explicit :class:`ValueError`
+  (message carries the span kind and flattened position) instead of a bare
+  KeyError -- refs are span-id anchored, so an id-less span cannot be
+  referenced;
 * duplicate span ids: the span id -> event mapping keeps the **first**
   occurrence (a later duplicate must not steal refs); occurrences beyond the
   first are counted as ``duplicate_span_ids`` (previously the last silently
@@ -116,7 +122,10 @@ class CanonicalEventsRepresenter(Representer):
                 eid = f"e{idx:03d}"
                 raw_kind = str(node.get("kind") or "")
                 kind = _admit_kind(raw_kind)
-                if kind != raw_kind:
+                if kind != raw_kind and kind != raw_kind.strip().upper():
+                    # an in-vocab value after pure case/whitespace
+                    # normalization ("tool_call") is not an out-of-vocab
+                    # remap; only alias/fallback admissions count
                     remapped += 1
                 # node's own timestamp wins when numeric (Langfuse metadata
                 # ts); otherwise fall back to the sequence number [declared]
@@ -136,12 +145,22 @@ class CanonicalEventsRepresenter(Representer):
                     index=idx,
                 )
                 events.append(ev)
-                if node["id"] in by_span:
+                span_id = node.get("id")
+                if span_id is None:
+                    # explicit instead of a bare KeyError: refs are span-id
+                    # anchored, so a span without an id cannot be referenced
+                    raise ValueError(
+                        f"span tree node at flattened index {idx} "
+                        f"(kind={raw_kind or '?'}, agent={ev.agent}, "
+                        f"parent={parent_eid or 'None'}) is missing the "
+                        "required 'id' key: every span must carry an id"
+                    )
+                if span_id in by_span:
                     # duplicate span id: keep the first occurrence so refs
                     # stay anchored to the earliest event; count the trace
                     duplicates += 1
                 else:
-                    by_span[node["id"]] = ev
+                    by_span[span_id] = ev
                 raw_refs[eid] = list(node.get("refs") or [])
                 walk(node.get("children") or [], eid)
 

@@ -13,9 +13,10 @@ exhausted; a minimum inter-call interval can be configured for throttling.
 
 Structured-output strategy [inferred]: to stay compatible with arbitrary
 OpenAI-compatible backends (including GLM), avoid the beta path of
-``chat.completions.parse``; instead embed the JSON Schema into the prompt
-as a constraint + require a pure JSON reply, and retry once with the error
-appended when client-side parsing fails.
+``chat.completions.parse``; instead embed the JSON Schema into the first
+system message as a constraint + require a pure JSON reply, and retry
+twice with the parse error appended when client-side parsing fails (the
+reply at hand is always parsed before any new request is pulled).
 """
 
 from __future__ import annotations
@@ -36,8 +37,9 @@ class OpenAICompatibleLLMClient(CallLogMixin):
     """Implements the LLMClient protocol; use as needed after the optional extra ``pip install atap[llm]``.
 
     After ``attach_call_log(path)`` every complete appends an audit record
-    (prompt/response/latency/usage tokens, plus error on failure);
-    runtime.run_config mounts ``<run_dir>/llm_calls.jsonl`` automatically.
+    (prompt/response/latency/usage tokens, retry count, plus error on
+    failure); runtime.run_config mounts ``<run_dir>/llm_calls.jsonl``
+    automatically.
     """
 
     def __init__(
@@ -73,6 +75,10 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         self._last_call_ts = 0.0
         self.calls: list[dict] = []
         self.retries: list[dict] = []
+        # structured-output parse-repair retries (peer of ``retries``, which
+        # records transport-level backoff; both feed the audit's ``retries``
+        # count)
+        self.parse_retries: list[dict] = []
         self.http_requests = 0   # HTTP requests actually issued (including rate-limit/parse-repair retries)
 
     # ------------------------------------------------------------------
@@ -177,6 +183,8 @@ class OpenAICompatibleLLMClient(CallLogMixin):
     ) -> LLMResult:
         t0 = time.perf_counter()
         n_http0 = self.http_requests
+        n_retry0 = len(self.retries)
+        n_parse0 = len(self.parse_retries)
         base = {
             "client": "openai",
             "tag": tag,
@@ -187,7 +195,8 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         # http_requests = HTTP requests actually issued by this complete
         # (including rate-limit retries and parse-repair retries) -- the
         # upper bound for quota accounting; only successful requests
-        # actually consume the free-tier quota.
+        # actually consume the free-tier quota. retries = retry events of
+        # this complete (transport backoff + structured parse repairs).
         try:
             result = self._complete(messages, schema=schema, model=model, tag=tag)
         except Exception as e:   # non-LLMError exceptions also go into the
@@ -197,6 +206,8 @@ class OpenAICompatibleLLMClient(CallLogMixin):
             self._emit_call_record({
                 **base, "ok": False,
                 "http_requests": self.http_requests - n_http0,
+                "retries": (len(self.retries) - n_retry0)
+                           + (len(self.parse_retries) - n_parse0),
                 "latency_ms": round((time.perf_counter() - t0) * 1000, 3),
                 "error": f"{type(e).__name__}: {e}"[:500],
             })
@@ -204,6 +215,8 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         self._emit_call_record({
             **base, "ok": True,
             "http_requests": self.http_requests - n_http0,
+            "retries": (len(self.retries) - n_retry0)
+                       + (len(self.parse_retries) - n_parse0),
             "latency_ms": round((time.perf_counter() - t0) * 1000, 3),
             "response": result.text[:RESPONSE_CAP],
             "usage": result.usage,
@@ -221,9 +234,24 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         use_model = model or self.model
         payload_messages = [dict(m) for m in messages]
         if schema is not None:
-            payload_messages.append(
-                {"role": "system", "content": self._schema_instruction(schema)}
-            )
+            # Merge the schema constraint into the FIRST system message
+            # instead of appending a second trailing system message: the
+            # message order stays [system, user] and backends that only
+            # honor leading system turns still see the constraint (with no
+            # leading system message, one is prepended).
+            instruction = self._schema_instruction(schema)
+            if payload_messages and payload_messages[0].get("role") == "system":
+                payload_messages[0] = {
+                    **payload_messages[0],
+                    "content": (
+                        f"{payload_messages[0].get('content', '')}\n\n"
+                        f"{instruction}"
+                    ),
+                }
+            else:
+                payload_messages.insert(
+                    0, {"role": "system", "content": instruction}
+                )
         self.calls.append({"tag": tag, "n_messages": len(payload_messages)})
         resp = self._create(payload_messages, use_model, tag)
         text = resp.choices[0].message.content or ""
@@ -233,13 +261,24 @@ class OpenAICompatibleLLMClient(CallLogMixin):
             return LLMResult(text=text, usage=usage)
         last_err: Exception | None = None
         retry_messages = list(payload_messages)
-        for _ in range(3):  # retry with the error appended on parse failure (2 retries in total)
+        # Parse the already-fetched reply FIRST; only pull a new reply when
+        # parsing failed and retry budget remains (2 retries in total). The
+        # final failure therefore costs exactly 1 + 2 = 3 HTTP calls -- the
+        # last fetched reply is never left unparsed (previously the 3rd
+        # failure pulled a 4th reply that was discarded unexamined).
+        for attempt in range(3):
             try:
                 return LLMResult(
                     text=text, parsed=parse_structured(text, schema), usage=usage
                 )
             except LLMError as e:
                 last_err = e
+                if attempt == 2:
+                    break   # no retry budget left: fail without paying for an unused reply
+                self.parse_retries.append(
+                    {"tag": tag, "attempt": attempt + 1,
+                     "error": str(e)[:160]}
+                )
                 retry_messages.append({"role": "assistant", "content": text[:2000]})
                 retry_messages.append(
                     {"role": "user",

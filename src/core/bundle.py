@@ -70,6 +70,10 @@ class TrajectoryBundle:
 
         Cross-algorithm reads of attribution results all go through here; the
         recovery stage stays unaware of specific attribution algorithm names.
+        Provenance: a Hypothesis whose ``source`` is still empty is tagged
+        here with the name of the artifact (algorithm) that carried it, so
+        after cross-algorithm merging each hypothesis stays traceable to its
+        producing algorithm (downstream consumers filter by ``source``).
         """
         out: list[Hypothesis] = []
         for name, art in self.artifacts.get("attribute", {}).items():
@@ -79,7 +83,10 @@ class TrajectoryBundle:
             if items is None:
                 items = []
             for h in items:
-                out.append(Hypothesis.from_dict(h) if isinstance(h, dict) else h)
+                hyp = Hypothesis.from_dict(h) if isinstance(h, dict) else h
+                if hyp.source == "":
+                    hyp.source = name
+                out.append(hyp)
         return out
 
     # -- report ----------------------------------------------------------------
@@ -92,7 +99,10 @@ class TrajectoryBundle:
         ]
         for stage in ("represent", "analyze", "classify", "attribute", "recover"):
             for name, art in self.artifacts.get(stage, {}).items():
-                lines.append(f"  artifact {stage}/{name}: {json.dumps(art, ensure_ascii=False)[:160]}")
+                lines.append(
+                    f"  artifact {stage}/{name}: "
+                    f"{json.dumps(art, ensure_ascii=False, default=str)[:160]}"
+                )
         for t in self.reruns:
             lines.append(
                 f"  rerun {t.trace_id}: {'success' if t.outcome.success else 'FAILURE'}"

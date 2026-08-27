@@ -132,6 +132,25 @@ def test_inducer_no_proposals_on_fully_labeled_corpus():
     assert art["stats"]["n_candidates"] == 0
 
 
+def test_novel_candidate_agent_resolved_from_trajectory():
+    """MastLabel carries no agent field, so a novel candidate's agent is
+    resolved from the R0 event at the label's evidence step (previously a
+    constant "unknown"); absent/out-of-range steps still yield "unknown"."""
+    from atap.classify.inducer import _agent_at
+
+    bundles, ctx = _deadlock_bundles()
+    MastJudgeClassifier(allow_novel=True).run_corpus(bundles, ctx)
+    b = bundles[0]
+    step = b.get("classify", "mast_judge")["labels"][0]["step"]
+    events = b.trajectory.events
+    assert 0 <= step < len(events)          # novel labels carry a usable step
+    assert _agent_at(b, step) == events[step].agent
+    assert _agent_at(b, step) != "unknown"
+    assert _agent_at(b, None) == "unknown"          # no evidence step
+    assert _agent_at(b, len(events) + 5) == "unknown"  # out of range
+    assert _agent_at(b, -1) == "unknown"            # negative index not trusted
+
+
 def test_inducer_requires_mast_judge_artifact():
     bundles, ctx = _deadlock_bundles(n=1)
     import pytest

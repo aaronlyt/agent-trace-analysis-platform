@@ -1,4 +1,7 @@
-"""Stage 4D tests: Langfuse v3 / OTel GenAI ingestion adapters (roundtrip fidelity)."""
+"""Stage 4D tests: Langfuse v3 / OTel GenAI ingestion adapters (roundtrip
+fidelity; the Langfuse import accepts both the current v3
+span-create/generation-create events and the legacy v2-style
+observation-create + body.type form)."""
 
 from __future__ import annotations
 
@@ -121,14 +124,15 @@ def test_otel_roundtrip_semantic_equality(tmp_path):
 def test_langfuse_export_uses_v3_ingestion_schema():
     payload = export_langfuse(_flatten(_r0_traces()))
     evt_types = {e["type"] for e in payload["batch"]}
-    assert evt_types == {"trace-create", "observation-create"}
-    obs = next(e for e in payload["batch"] if e["type"] == "observation-create")
+    # current v3 ingestion event names: the observation type lives in the
+    # event name, not in the body
+    assert evt_types == {"trace-create", "span-create", "generation-create"}
+    obs = next(e for e in payload["batch"] if e["type"] == "generation-create")
     body = obs["body"]
-    assert {"id", "traceId", "type", "name", "parentObservationId"} <= set(body)
-    # GENERATION type is used for LLM_CALL
-    gens = [e for e in payload["batch"]
-            if e["type"] == "observation-create"
-            and e["body"]["type"] == "GENERATION"]
+    assert {"id", "traceId", "name", "parentObservationId"} <= set(body)
+    assert "type" not in body   # v3 bodies carry no type field
+    # GENERATION events are used for LLM_CALL
+    gens = [e for e in payload["batch"] if e["type"] == "generation-create"]
     assert gens
 
 
@@ -209,7 +213,8 @@ def test_build_source_dispatches_new_types(tmp_path):
     src2 = build_source({"type": "otel", "path": str(ot)})
     assert isinstance(src2, OTelTraceSource)
     assert len(src2.load()) == 3
-    with pytest.raises(ValueError, match="langfuse"):
+    from atap.core.config import ConfigError
+    with pytest.raises(ConfigError, match="langfuse"):
         build_source({"type": "nope", "path": "x"})
 
 
@@ -267,7 +272,7 @@ def test_cli_export_flattens_raw_span_only_traces_langfuse(tmp_path, capsys):
     assert "flattened 3 raw-span-only" in captured.out
     payload = json.loads(out.read_text(encoding="utf-8"))
     observations = [e for e in payload["batch"]
-                    if e["type"] == "observation-create"]
+                    if e["type"] in ("span-create", "generation-create")]
     assert len(observations) == sum(expected.values())   # events not dropped
     for t in _flatten_loaded(LangfuseTraceSource(str(out)).load()):
         assert len(t.events) == expected[t.trace_id]
@@ -298,7 +303,7 @@ def test_roundtrip_pipeline_end_to_end(tmp_path):
     traces = _flatten(_r0_traces())
     f = tmp_path / "lf.json"
     f.write_text(json.dumps(export_langfuse(traces), ensure_ascii=False),
-                 encoding="utf-8")
+                  encoding="utf-8")
     imported = LangfuseTraceSource(str(f)).load()
     ctx = RunContext()
     b = TrajectoryBundle(next(
@@ -309,3 +314,77 @@ def test_roundtrip_pipeline_end_to_end(tmp_path):
     art = b.get("attribute", "rg_ug")
     assert art["label"] == "UG_true_extraction"
     assert b.hypotheses()[0].root_cause_code == "utilization_gap"
+
+
+def test_otel_import_pretty_printed_documents(tmp_path):
+    """Pretty-printed OTLP JSON must import: a whole-document json.loads
+    runs first (the old line-based strategy crashed on array member lines
+    that are not standalone JSON)."""
+    traces = _flatten(_r0_traces())
+    # pretty-printed single document
+    f1 = tmp_path / "pretty_single.json"
+    f1.write_text(json.dumps(export_otel(traces), indent=2), encoding="utf-8")
+    imported = OTelTraceSource(str(f1)).load()
+    assert {t.trace_id for t in imported} == {t.trace_id for t in traces}
+    # pretty-printed array of two disjoint documents
+    f2 = tmp_path / "pretty_array.json"
+    f2.write_text(
+        json.dumps(
+            [export_otel(traces[:1]), export_otel(traces[1:])], indent=2
+        ),
+        encoding="utf-8",
+    )
+    imported2 = OTelTraceSource(str(f2)).load()
+    assert {t.trace_id for t in imported2} == {t.trace_id for t in traces}
+    # JSONL fallback (one document per line) still works
+    f3 = tmp_path / "docs.jsonl"
+    f3.write_text(
+        "\n".join(
+            json.dumps(export_otel([t]), ensure_ascii=False)
+            for t in traces
+        ),
+        encoding="utf-8",
+    )
+    imported3 = OTelTraceSource(str(f3)).load()
+    assert {t.trace_id for t in imported3} == {t.trace_id for t in traces}
+
+
+def _legacy_langfuse_batch(payload):
+    """Current v3 export -> legacy v2-style batch (observation-create with
+    body.type=SPAN/GENERATION)."""
+    out = []
+    for evt in payload["batch"]:
+        if evt["type"] == "trace-create":
+            out.append(evt)
+        else:
+            body = dict(evt["body"])
+            body["type"] = (
+                "GENERATION" if evt["type"] == "generation-create" else "SPAN"
+            )
+            out.append({**evt, "type": "observation-create", "body": body})
+    return {"batch": out}
+
+
+def test_langfuse_import_accepts_legacy_observation_create(tmp_path):
+    """Backward compatibility: legacy observation-create batches import and
+    roundtrip identically to the current span-create/generation-create form
+    (both directions of the roundtrip hold)."""
+    traces = _flatten(_r0_traces())
+    f = tmp_path / "legacy.json"
+    f.write_text(
+        json.dumps(_legacy_langfuse_batch(export_langfuse(traces)),
+                   ensure_ascii=False),
+        encoding="utf-8",
+    )
+    imported = LangfuseTraceSource(str(f)).load()
+    ctx = RunContext()
+    bundles = [TrajectoryBundle(t) for t in imported]
+    for b in bundles:
+        create("represent", "canonical_events").run_one(b, ctx)
+    by_id = {b.trace_id: b.trajectory for b in bundles}
+    for o in traces:
+        r = by_id[o.trace_id]
+        assert _sig(r) == _sig(o), f"{o.trace_id}: legacy import differs"
+        assert _refs_sig(r) == _refs_sig(o)
+        assert r.outcome.success == o.outcome.success
+        assert "injected_fault" not in r.meta

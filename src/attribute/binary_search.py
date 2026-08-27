@@ -43,9 +43,14 @@ Differences from the paper:
   which may legitimately be an environment-side agent;
 * **answer parsing** [adaptation]: the paper assumes bare answers, but real
   judges occasionally negate ("no error in the lower half") — negated halves
-  are flipped by a negation-token check (not/no/nothing/none/without/cannot/
-  clean/correct plus n't contractions); an answer naming neither or both
-  halves raises :class:`LLMError` (LLM-parse-failure taxonomy, consistent with
+  are flipped by a **clause-scoped** negation-token check (not/no/nothing/
+  none/without/cannot/clean/correct plus n't contractions): the answer is
+  split into clauses on ``[,;:.!?\\n]`` and the negation tokens are matched
+  only inside the clause that names the half, so a qualifier in another
+  clause ("I cannot be fully certain, but the error is in the lower half")
+  does not flip the answer; a flip is recorded in the round log as
+  ``negated: true``; an answer naming neither or both halves raises
+  :class:`LLMError` (LLM-parse-failure taxonomy, consistent with
   llm.base.parse_structured; not client-retryable — the round call is
   schema-less, so the OpenAI client's repair loop does not apply and the
   attribution run aborts with an explicit error, no silent degradation);
@@ -105,20 +110,32 @@ _REFINE_SYSTEM = (
 
 
 #: negation tokens in a judge answer (word-bounded; \w+n't catches isn't /
-#: doesn't / wasn't ...) — "no error in the lower half" means the upper half
+#: doesn't / wasn't ...) — "no error in the lower half" means the upper half;
+#: matched only inside the clause that names the half (see _CLAUSE_SPLIT_RE)
 _NEGATION_RE = re.compile(
     r"\b(?:not|no|nothing|none|without|cannot|clean|correct)\b|\w+n't",
     re.IGNORECASE,
 )
 
+#: clause boundaries for negation scoping — a negation token flips the half
+#: only when it sits in the same clause ("no error in the lower half"), not in
+#: a qualifying clause of its own ("I cannot be fully certain, but the error
+#: is in the lower half" stays a plain lower-half answer)
+_CLAUSE_SPLIT_RE = re.compile(r"[,;:.!?\n]")
 
-def _parse_half(text: str) -> str:
+
+def _parse_half(text: str) -> tuple[str, bool]:
     """Plain-text parsing (paper G.2: output should only be 'upper half'/'lower half').
 
     A negated half flips to the opposite half ("not in the lower half" /
     "the lower half looks clean" → upper) [adaptation: the paper assumes bare
-    answers]; an answer naming neither or both halves is unparseable and
-    raises LLMError (parse-failure taxonomy; not silently coerced).
+    answers]. Negation is **clause-scoped**: the text is split on
+    ``[,;:.!?\\n]`` and the negation tokens are matched only inside the clause
+    naming the half — "There is no doubt: ... upper half" / "Nothing
+    conclusive; lower half" are not flipped. Returns ``(half, negated)`` so
+    the caller can leave a ``negated: true`` trail in the round log; an
+    answer naming neither or both halves is unparseable and raises LLMError
+    (parse-failure taxonomy; not silently coerced).
     """
     low = text.lower()
     has_upper = "upper" in low
@@ -127,10 +144,15 @@ def _parse_half(text: str) -> str:
         raise LLMError(
             f"Unparseable binary-search answer (expected upper/lower half): {text[:120]!r}"
         )
-    negated = _NEGATION_RE.search(low) is not None
+    word = "lower" if has_lower else "upper"
+    clause = next(
+        (c for c in _CLAUSE_SPLIT_RE.split(low) if word in c),
+        low,
+    )
+    negated = _NEGATION_RE.search(clause) is not None
     if has_lower:
-        return "upper half" if negated else "lower half"
-    return "lower half" if negated else "upper half"
+        return ("upper half" if negated else "lower half"), negated
+    return ("lower half" if negated else "upper half"), negated
 
 
 @register
@@ -172,10 +194,14 @@ class BinarySearchAttributor(Attributor):
                 },
             ]
             result = ctx.llm.complete(messages, tag=self.name)
-            answer = _parse_half(result.text)
-            rounds.append(
-                {"interval": [low, high], "shown": [low, mid], "answer": answer}
-            )
+            answer, negated = _parse_half(result.text)
+            round_rec: dict = {
+                "interval": [low, high], "shown": [low, mid], "answer": answer
+            }
+            if negated:
+                # negation-flip audit trail (clause-scoped detection)
+                round_rec["negated"] = True
+            rounds.append(round_rec)
             if answer == "lower half":
                 high = mid
             else:

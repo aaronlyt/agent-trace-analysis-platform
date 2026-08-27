@@ -93,6 +93,17 @@ def _nearest_mast(tokens: list[str]) -> tuple[str | None, float]:
     return best_code, round(best_ratio, 4)
 
 
+def _agent_at(bundle, step) -> str:
+    """Resolve a novel candidate's agent from the R0 stream: MastLabel
+    carries no agent field, so the agent is taken from the event at the
+    label's evidence step (``unknown`` when the step is absent or outside
+    the stream)."""
+    events = bundle.trajectory.events
+    if isinstance(step, int) and 0 <= step < len(events):
+        return events[step].agent
+    return "unknown"
+
+
 @register
 class InducerClassifier(Classifier):
     stage = "classify"
@@ -135,7 +146,7 @@ class InducerClassifier(Classifier):
                 candidates.append({
                     "trace_id": b.trace_id,
                     "step": lab.get("step"),
-                    "agent": lab.get("agent") or "unknown",
+                    "agent": _agent_at(b, lab.get("step")),
                     "symptom": symptom,
                 })
 

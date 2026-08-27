@@ -108,7 +108,7 @@ def mast_definitions_block() -> str:
     lines = [f"{cat}: {name}" for cat, name in MAST_CATEGORIES.items()]
     for code, m in MAST_MODES.items():
         lines.append(f"{code} [{MAST_CATEGORIES[m['category']].split(' (')[0]}] "
-                     f"{m['name']} —— {m['definition']}")
+                     f"{m['name']} -- {m['definition']}")
     return "\n".join(lines)
 
 

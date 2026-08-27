@@ -131,8 +131,18 @@ def test_tool_oscillation_synthetic():
     """Two READ-WRITE-READ rounds (intervening write FAILED) -> tool_oscillation."""
     b = _osc_bundle(["read", "edit", "read", "edit", "read"], write_effect="FAILED")
     hits = _detected(b)
-    assert any(d["predicate"] == "tool_oscillation" and d["cycles"] >= 2
-               for d in hits)
+    osc = [d for d in hits if d["predicate"] == "tool_oscillation"]
+    assert any(d["cycles"] >= 2 for d in osc)
+    d = osc[0]
+    # interval shape aligned with the other three predicates: end_index =
+    # the closing read of the last counted cycle (events 1..5 are the five
+    # file actions; TASK_START=0 / TASK_END=6)
+    assert d["start_index"] == 1
+    assert d["end_index"] == 5
+    assert d["start_index"] <= d["end_index"]
+    # all four predicates share the interval shape (start_index/end_index)
+    for hit in hits:
+        assert "start_index" in hit and "end_index" in hit
 
 
 def test_tool_oscillation_negative_write_survived():

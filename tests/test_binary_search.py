@@ -35,10 +35,10 @@ def _bundle(task="q-trajaudit", fault=None):
 
 
 def test_parse_half():
-    assert _parse_half("lower half") == "lower half"
-    assert _parse_half("Upper Half") == "upper half"
-    assert _parse_half("the error is in the lower half") == "lower half"
-    assert _parse_half("The error is in the Upper half.") == "upper half"
+    assert _parse_half("lower half") == ("lower half", False)
+    assert _parse_half("Upper Half") == ("upper half", False)
+    assert _parse_half("the error is in the lower half") == ("lower half", False)
+    assert _parse_half("The error is in the Upper half.") == ("upper half", False)
     # neither/both halves named -> unparseable, LLM-parse-failure taxonomy
     with pytest.raises(LLMError, match="Unparseable"):
         _parse_half("maybe in the middle")
@@ -47,17 +47,58 @@ def test_parse_half():
 
 
 def test_parse_half_negated_answers():
-    """Real judges sometimes negate: a negated half means the opposite half."""
+    """Real judges sometimes negate: a negated half means the opposite half.
+    Negation is clause-scoped: only tokens inside the clause that names the
+    half flip it."""
     # negated lower -> upper
-    assert _parse_half("not in the lower half") == "upper half"
-    assert _parse_half("No error in the lower half") == "upper half"
-    assert _parse_half("the lower half looks clean") == "upper half"
-    assert _parse_half("the lower half is correct") == "upper half"
-    assert _parse_half("nothing wrong in the lower half") == "upper half"
+    assert _parse_half("not in the lower half") == ("upper half", True)
+    assert _parse_half("No error in the lower half") == ("upper half", True)
+    assert _parse_half("the lower half looks clean") == ("upper half", True)
+    assert _parse_half("the lower half is correct") == ("upper half", True)
+    assert _parse_half("nothing wrong in the lower half") == ("upper half", True)
     # negated upper -> lower
-    assert _parse_half("not in the upper half") == "lower half"
-    assert _parse_half("no error in the upper half") == "lower half"
-    assert _parse_half("the upper half doesn't contain the error") == "lower half"
+    assert _parse_half("not in the upper half") == ("lower half", True)
+    assert _parse_half("no error in the upper half") == ("lower half", True)
+    assert _parse_half("the upper half doesn't contain the error") == ("lower half", True)
+
+
+def test_parse_half_negation_is_clause_scoped():
+    """Positive group: same-clause negations still flip. Negative group: a
+    negation token in a *different* clause must not flip the answer."""
+    # positive: negation inside the half-naming clause
+    assert _parse_half("no error in the lower half")[0] == "upper half"
+    assert _parse_half("The lower half looks clean")[0] == "upper half"
+    # negative: qualifier clause of its own — no flip
+    assert _parse_half("There is no doubt: the error is in the upper half") == ("upper half", False)
+    assert _parse_half("Nothing conclusive; lower half") == ("lower half", False)
+    assert _parse_half(
+        "I cannot be fully certain, but the error is in the lower half"
+    ) == ("lower half", False)
+
+
+def test_negated_round_leaves_trail_in_rounds():
+    """A negation flip must be auditable: the round record carries
+    ``negated: true`` (only when a flip actually happened)."""
+    events = [
+        TraceEvent(id="e000", ts=0.0, kind=TASK_START, agent="user", index=0,
+                   payload={"task": "t"}),
+        TraceEvent(id="e001", ts=1.0, kind=LLM_CALL, agent="planner", index=1),
+        TraceEvent(id="e002", ts=2.0, kind=TOOL_CALL, agent="searcher", index=2),
+        TraceEvent(id="e003", ts=3.0, kind=TOOL_RESULT, agent="env", index=3),
+        TraceEvent(id="e004", ts=4.0, kind=TASK_END, agent="env", index=4),
+    ]
+    t = Trajectory("neg-trail", "t", events=events, outcome=Outcome(success=False))
+    b = TrajectoryBundle(t)
+    # round 1 flips ("no error in the lower half" -> upper), round 2 is bare
+    ctx = RunContext(llm=FakeLLMClient(responses=[
+        "no error in the lower half", "upper half",
+    ]))
+    BinarySearchAttributor(refine=False).run_one(b, ctx)
+    art = b.get("attribute", "binary_search")
+    assert art["rounds"][0]["answer"] == "upper half"
+    assert art["rounds"][0]["negated"] is True
+    assert art["rounds"][1]["answer"] == "upper half"
+    assert "negated" not in art["rounds"][1]
 
 
 def test_unparseable_answer_mid_run_raises_llm_error():

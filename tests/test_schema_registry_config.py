@@ -145,6 +145,49 @@ stages:
     assert cfg.stages["analyze"][0].name == "judge_eval"
 
 
+def test_config_rejects_typo_stage_entry_keys():
+    # 'paramz' (typo of params) must fail loudly listing the illegal key
+    with pytest.raises(ConfigError, match="paramz"):
+        config_from_dict({"stages": {"analyze": [{"name": "x", "paramz": {}}]}})
+
+
+def test_config_closed_loop_must_be_real_bool():
+    # YAML "false" as a string must raise, not coerce to truthy True
+    with pytest.raises(ConfigError, match="boolean"):
+        config_from_dict({"stages": {"analyze": ["x"]}, "closed_loop": "false"})
+    with pytest.raises(ConfigError, match="boolean"):
+        config_from_dict({"stages": {"analyze": ["x"]}, "closed_loop": 1})
+    cfg = config_from_dict({"stages": {"analyze": ["x"]}, "closed_loop": True})
+    assert cfg.closed_loop is True
+
+
+def test_config_seed_must_be_intable():
+    with pytest.raises(ConfigError, match="seed"):
+        config_from_dict({"stages": {"analyze": ["x"]}, "seed": "abc"})
+    assert config_from_dict({"stages": {"analyze": ["x"]}, "seed": "7"}).seed == 7
+
+
+def test_load_config_wraps_parse_errors(tmp_path):
+    from atap.core.config import load_config
+
+    y = tmp_path / "bad.yaml"
+    y.write_text("stages: [unclosed", encoding="utf-8")
+    with pytest.raises(ConfigError, match="invalid YAML"):
+        load_config(y)
+    j = tmp_path / "bad.json"
+    j.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ConfigError, match="invalid JSON"):
+        load_config(j)
+
+
+def test_registry_stages_derived_from_stage_order():
+    # single source of truth: registry.STAGES is derived, not re-typed
+    from atap.core.base import STAGE_ORDER
+    from atap.core.registry import STAGES
+
+    assert STAGES == tuple(STAGE_ORDER)
+
+
 def test_event_kinds_valid():
     for t in (success_trace(), failure_trace_ungrounded()):
         for ev in t.events:
