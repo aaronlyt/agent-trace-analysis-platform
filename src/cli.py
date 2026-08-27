@@ -71,7 +71,17 @@ def _cmd_demo(args: argparse.Namespace) -> int:
 def _cmd_compare(args: argparse.Namespace) -> int:
     from atap.compare import run_compare
 
-    run_compare(args.config, args.out, traces=args.traces)
+    comparison = run_compare(args.config, args.out, traces=args.traces)
+    # symmetric with `run`: isolated algorithm failures in any compared
+    # config must surface in the exit status (the errors column shows it,
+    # but a partially-failed comparison should not read as clean)
+    n_errors = sum(row.get("errors", 0) for row in comparison.get("rows", []))
+    if n_errors:
+        print(
+            f"ERROR: {n_errors} isolated algorithm failure(s) across the "
+            f"compared runs (see the errors column / per-run stage_log)"
+        )
+        return 1
     return 0
 
 

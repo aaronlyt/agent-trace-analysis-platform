@@ -170,6 +170,7 @@ def test_pipeline_isolates_algorithm_crash_and_flushes_earlier_stages(tmp_path):
             bundle.put("recover", "after", {"ok": True})
 
     _Boom.fired = False   # reset class-level state (test may rerun in-session)
+    _After.ran_on = []
     traces = [success_trace("t0"), success_trace("t1")]
     store = JSONLArtifactStore(tmp_path / "arts")
     ctx = RunContext(run_dir=str(tmp_path), llm=None, store=store)
@@ -253,3 +254,23 @@ def json_load(p: Path):
     import json
 
     return json.loads(Path(p).read_text(encoding="utf-8"))
+
+
+def test_judge_evidence_rejects_error_artifacts():
+    """closed_loop's judge_available must not count an error-isolated
+    judge_eval artifact as "the judge ran" (independent verify agent B, P1):
+    Pipeline.run leaves {"status": "error", ...} in place of the artifact --
+    a dict, but carrying no verdict. judge_available=True with score=null
+    would mislead the judge-vs-outcome cross-audit this field exists for."""
+    from atap.core.pipeline import _judge_evidence
+
+    # real verdict artifact -> evidence extracted, available
+    judge, ok = _judge_evidence({"score": 8.5, "summary": "succeeded"})
+    assert ok is True and judge == {"score": 8.5, "summary": "succeeded"}
+    # error-isolated artifact -> NOT available, no judge payload
+    judge, ok = _judge_evidence(
+        {"status": "error", "error": "LLMError: ...", "isolated": True})
+    assert ok is False and judge is None
+    # absent artifact / non-dict -> not available
+    assert _judge_evidence(None) == (None, False)
+    assert _judge_evidence([1, 2]) == (None, False)

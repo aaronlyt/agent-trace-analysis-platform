@@ -205,14 +205,10 @@ class Pipeline:
                 if repl is not None:
                     vb = verify_bundle_by_trace.get(repl.trace_id)
                     judge_art = vb.get("analyze", "judge_eval") if vb is not None else None
-                    judge_available = isinstance(judge_art, dict)
+                    judge, judge_available = _judge_evidence(judge_art)
                     verify = {
                         "outcome_success": repl.trace_id in improved,
-                        "judge": (
-                            {"score": judge_art.get("score"),
-                             "summary": judge_art.get("summary")}
-                            if judge_available else None
-                        ),
+                        "judge": judge,
                         "judge_available": judge_available,
                     }
                 b.put(
@@ -225,3 +221,20 @@ class Pipeline:
                     },
                 )
         return origin_bundles, reports
+
+
+def _judge_evidence(judge_art: Any) -> tuple[dict[str, Any] | None, bool]:
+    """Verification-round judge evidence for the closed_loop artifact.
+
+    An error-isolated algorithm leaves ``{"status": "error", ...}`` in place
+    of its artifact (Pipeline.run); that must NOT count as "the judge ran"
+    -- the artifact exists as a dict, but it carries no verdict, and
+    judge_available=True with score=null would mislead exactly the
+    judge-vs-outcome cross-audit this field exists for (verify-round
+    review agent B, P1)."""
+    if not isinstance(judge_art, dict) or judge_art.get("status") == "error":
+        return None, False
+    return (
+        {"score": judge_art.get("score"), "summary": judge_art.get("summary")},
+        True,
+    )

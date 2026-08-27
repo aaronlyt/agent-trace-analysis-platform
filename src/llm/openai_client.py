@@ -163,7 +163,7 @@ class OpenAICompatibleLLMClient(CallLogMixin):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _usage_dict(resp) -> dict[str, int] | None:
+    def _usage_dict(resp) -> dict[str, "int | None"] | None:
         u = getattr(resp, "usage", None)
         if u is None:
             return None
@@ -174,8 +174,9 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         }
 
     @staticmethod
-    def _merge_usage(a: dict[str, int] | None,
-                     b: dict[str, int] | None) -> dict[str, int] | None:
+    def _merge_usage(a: "dict[str, int | None] | None",
+                     b: "dict[str, int | None] | None"
+                     ) -> "dict[str, int | None] | None":
         """Sum two per-response usage dicts (per key; a missing side keeps
         the present side, both-missing stays None) -- a logical call that
         needed parse-repair retries paid for every reply, so its recorded

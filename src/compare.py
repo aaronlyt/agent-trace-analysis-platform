@@ -189,6 +189,10 @@ def run_compare(
             "llm_calls": sum(by_tag.values()),
             "llm_calls_by_tag": by_tag,
             "closed_loop": cfg.closed_loop,
+            # isolated algorithm failures (Pipeline.run): a crashed algorithm
+            # must be visible in the comparison row -- otherwise a partially
+            # failed run presents as perfectly normal hit counts
+            "errors": sum(r.n_errors for r in reports),
             "per_fault": ev["per_fault"],
         }
         rows.append(row)
@@ -207,14 +211,15 @@ def run_compare(
 
 def _print_table(rows: list[dict[str, Any]]) -> None:
     print(f"{'config':<28}{'step':>8}{'agent':>9}{'MAST':>8}"
-          f"{'recover':>10}{'loop':>7}{'llm_calls':>11}")
+          f"{'recover':>10}{'loop':>7}{'llm_calls':>11}{'errors':>7}")
     for r in rows:
         n = r["n_failed"]
         cells = (
             f"{r['step_hits']}/{n}", f"{r['agent_hits']}/{n}",
             f"{r['code_hits']}/{n}", f"{r['recovered']}/{n}",
             str(r["closed_loop_improved"]), str(r["llm_calls"]),
+            str(r.get("errors", 0)),
         )
         print(f"{r['run_name']:<28}{cells[0]:>8}{cells[1]:>9}{cells[2]:>8}"
-              f"{cells[3]:>10}{cells[4]:>7}{cells[5]:>11}")
+              f"{cells[3]:>10}{cells[4]:>7}{cells[5]:>11}{cells[6]:>7}")
     print("comparison details -> comparison.json (per-fault hits and LLM call buckets)")
