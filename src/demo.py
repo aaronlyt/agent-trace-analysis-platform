@@ -101,7 +101,8 @@ def run_demo(seed: int = 7, out: str = "runs/demo") -> None:
     )
     for i, r in enumerate(reports):
         print(f"round{i}: traces={r.n_traces} failures={r.n_failures} "
-              f"attributed={r.n_attributed} reruns={r.n_reruns}(ok={r.n_rerun_success})")
+              f"attributed={r.n_attributed} reruns={r.n_reruns}(ok={r.n_rerun_success})"
+              + (f" errors={r.n_errors}" if r.n_errors else ""))
     print(f"artifacts directory: {out_dir}/artifacts (report.json + per-trajectory per-stage JSON)")
     log.info(
         "demo finished: step=%d/%d agent=%d/%d mast=%d/%d recovered=%d/%d",

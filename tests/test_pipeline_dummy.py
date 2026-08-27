@@ -200,6 +200,29 @@ def test_pipeline_isolates_algorithm_crash_and_flushes_earlier_stages(tmp_path):
     assert json_load(tmp_path / "arts" / "report.json")["n_errors"] == 1
 
 
+def test_cli_run_exit_code_reflects_isolated_errors(tmp_path, monkeypatch, capsys):
+    """Isolated algorithm failures must surface in the CLI exit status
+    (independent-verify follow-up): before isolation a mid-run crash failed
+    the whole command; after isolation, silently exiting 0 on n_errors > 0
+    would regress that contract. The stdout summary also shows errors=N."""
+    import atap.runtime
+    from atap.cli import main
+    from atap.core.pipeline import PipelineReport
+
+    def fake_run_config(cfg, run_dir, **kwargs):
+        reports = [PipelineReport(run_name=cfg.run_name, n_traces=3, n_errors=2)]
+        return [], reports
+
+    monkeypatch.setattr(atap.runtime, "run_config", fake_run_config)
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text(json.dumps(
+        {"stages": {"represent": ["canonical_events"]}}), encoding="utf-8")
+    rc = main(["run", "--config", str(cfg), "--out", str(tmp_path / "out")])
+    out = capsys.readouterr().out
+    assert rc == 1, "isolated failures must fail the command (exit 1)"
+    assert "errors=2" in out and "algorithm failure(s) were isolated" in out
+
+
 def test_cli_run_prints_actual_artifacts_dir(tmp_path, capsys):
     """The run command prints the artifact location resolved from the actual
     store config (a redirected store.dir must be reflected, not the

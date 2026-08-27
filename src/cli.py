@@ -43,9 +43,21 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(
             f"  round{i}: traces={r.n_traces} failures={r.n_failures} "
             f"attributed={r.n_attributed} reruns={r.n_reruns}(ok={r.n_rerun_success})"
+            + (f" errors={r.n_errors}" if r.n_errors else "")
         )
     # actual artifact location (cfg.store may redirect it away from <out>/artifacts)
     print(f"artifacts -> {build_store(cfg.store, args.out).dir}")
+    n_errors = sum(r.n_errors for r in reports)
+    if n_errors:
+        # isolated algorithm failures must stay visible in the exit status:
+        # previously a mid-run crash failed the whole command; silently
+        # exiting 0 after isolation would be a regression of that contract
+        print(
+            f"ERROR: {n_errors} algorithm failure(s) were isolated and skipped "
+            f"(details in the FAILED stage_log lines and the status=error "
+            f"artifacts above)"
+        )
+        return 1
     return 0
 
 
