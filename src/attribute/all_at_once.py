@@ -55,7 +55,7 @@ _SYSTEM = (
     "You are an expert in multi-agent system failure attribution. Given a task and "
     "the full failure trajectory, determine: (1) which agent bears primary "
     "responsibility; (2) at which step the decisive error occurred (the earliest "
-    "decisive error, not the step where the symptom manifests — symptoms often "
+    "decisive error, not the step where the symptom manifests -- symptoms often "
     "appear later than the root cause); (3) the reason and a fix suggestion. "
     "You may consult the MAST failure mode codes:\n{definitions}"
 )
@@ -66,7 +66,7 @@ _FEW_SHOT = (
     "Example: the editor receives an ambiguous change request at step 6, "
     "never asks for clarification, and at step 10 delivers a rewrite of the "
     "wrong section; the failure only becomes visible at the later review "
-    "step — responsible agent=editor, step=10 (proceeding on ambiguous input "
+    "step -- responsible agent=editor, step=10 (proceeding on ambiguous input "
     "without clarification is the earliest decisive error, not the later "
     "review where the symptom manifests), failure_mode=FM-2.2."
 )

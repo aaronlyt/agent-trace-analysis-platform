@@ -20,7 +20,7 @@ Registry、YAML 配置组合 pipeline；算法之间只通过产物（artifact�
 
 ```bash
 uv venv .venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/          # 312 个测试（含离线全链路 e2e 与审计回归）
+.venv/bin/python -m pytest tests/          # 317 个测试（含离线全链路 e2e 与审计回归）
 .venv/bin/atap demo                        # 离线全链路演示（FakeLLM，确定性）
 .venv/bin/atap run --config configs/pipeline_offline.yaml
 # 阶段三全栈（R5+循环谓词+L0 规则包+二分+反馈注入，频谱语料 24 条）：

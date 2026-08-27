@@ -191,7 +191,13 @@ class OutcomeLabel(BaseModel):
     @field_validator("label", mode="before")
     @classmethod
     def _norm_label(cls, v):
-        return _OUTCOME_LABEL_ALIAS.get(str(v).strip().lower(), v)
+        s = str(v).strip().lower()
+        hit = _OUTCOME_LABEL_ALIAS.get(s)
+        if hit is None:
+            # separator folding (same treatment as Intervention.category):
+            # "partially_validated" / "Partially-Validated" -> the spaced form
+            hit = _OUTCOME_LABEL_ALIAS.get(re.sub(r"[\s_-]+", " ", s))
+        return hit if hit is not None else v
 
 
 _SEGMENT_SYSTEM = (

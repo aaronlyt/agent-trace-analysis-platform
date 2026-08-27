@@ -139,7 +139,7 @@ _LOCALIZE_SYSTEM = (
     "You are a hierarchical causal graph localizer. Given the events of the "
     "failing subtask interval (with upstream context) and the task, apply "
     "progressive causal filtering and provide: (1) the responsible agent and "
-    "the decisive error step (the earliest decisive error); (2) the mechanism — "
+    "the decisive error step (the earliest decisive error); (2) the mechanism -- "
     "local_error (the agent's own behavior is wrong, with no bias in upstream "
     "inputs) / upstream_propagation (the error came from upstream "
     "transmission; give the first upstream pollution step) / executor_loop "
@@ -311,10 +311,13 @@ class ChiefAttributor(Attributor):
     def _clamp_mechanism(raw: str) -> str:
         """Clamp a free-string mechanism into MECHANISMS: closest vocabulary
         word by difflib similarity, else "unknown" (never passes an
-        out-of-vocabulary value into the artifact unchecked)."""
+        out-of-vocabulary value into the artifact unchecked). The 0.75
+        cutoff only catches near-typo distances -- semantically different
+        words (e.g. "propagated_error") map to "unknown" rather than to a
+        spuriously similar vocabulary entry."""
         if raw in MECHANISMS:
             return raw
         close = difflib.get_close_matches(
-            raw.lower(), MECHANISMS, n=1, cutoff=0.6
+            raw.lower(), MECHANISMS, n=1, cutoff=0.75
         )
         return close[0] if close else "unknown"

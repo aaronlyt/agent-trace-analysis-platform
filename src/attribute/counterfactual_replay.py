@@ -70,7 +70,7 @@ _SYSTEM = (
     "You are the oracle synthesizer for a counterfactual replay. Given a task, "
     "a trajectory, and a candidate error step, infer the correct behavior this "
     "step **should have exhibited** (expected), and give the minimal edit text "
-    "(edit_text) that replaces this step's message — the edit should directly "
+    "(edit_text) that replaces this step's message -- the edit should directly "
     "correct the step's erroneous behavior so the task moves toward success. "
     "Output JSON."
 )

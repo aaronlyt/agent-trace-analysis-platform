@@ -213,3 +213,77 @@ def test_rerun_meta_records_alignment_field():
                                "Avoid info_withholding: report the documents.")
     assert runs[0].meta["suffix_alignment"] == "exact"
     assert runs[0].meta["dropped_refs"] == 0
+
+
+# ------------------------------------------ verifier/outcome consistency & chain recovery --
+
+
+@pytest.mark.parametrize("kind", ["step_repetition", "malformed_tool_call"])
+def test_rerun_at_task_end_keeps_verifier_outcome_consistent(kind):
+    """Regression: pointing t* at (or past) the original VERIFIER -- which
+    out-of-range clamping also lands on -- made the rerun report
+    success=True while the retained prefix still showed the faulted
+    verifier line. The visible stream's last verifier verdict must win."""
+    sb, t = _prepared("q-trajaudit", kind)
+    rr = sb.rerun_from(t, len(t.events) - 1, f"Avoid {kind}: fix the failure.")
+    assert rr.meta["verifier_conflict"] is True
+    assert rr.outcome.success is False
+    last_verifier = next(e for e in reversed(rr.events) if e.kind == "VERIFIER")
+    assert not str(last_verifier.payload.get("content", "")).startswith("passed")
+
+    # an out-of-range step clamps to the same last position
+    rr2 = sb.rerun_from(t, 999, f"Avoid {kind}: fix the failure.")
+    assert rr2.meta["step_clamped"] is True
+    assert rr2.meta["verifier_conflict"] is True
+    assert rr2.outcome.success is False
+
+
+def test_failed_rerun_remains_recoverable_via_origin_fault():
+    """Regression: reruns strip injected_fault, so re-replaying a *failed*
+    rerun (the closed-loop second-round recovery shape) could never remove
+    the fault -- the lookup found nothing and the unexplained-failure guard
+    forced failure. The carried origin_fault restores chain recovery, and a
+    genuinely unexplained failure records the guard in meta."""
+    sb, t = _prepared("q-trajaudit", "malformed_tool_call")
+    step = t.meta["injected_fault"]["step"]
+    rr1 = sb.rerun_from(t, step, "vague feedback that names nothing")
+    assert rr1.outcome.success is False
+    assert "injected_fault" not in rr1.meta
+    assert rr1.meta["origin_fault"]["kind"] == "malformed_tool_call"
+
+    # chain: named feedback now recovers the failed rerun
+    rr2 = sb.rerun_from(rr1, step, "Avoid malformed_tool_call: validate arguments.")
+    assert rr2.outcome.success is True
+    assert rr2.meta["fault_removed"] is True
+    assert rr2.meta["unexplained_failure"] is False
+    assert rr2.meta["origin_fault"]["kind"] == "malformed_tool_call"
+
+    # genuinely unexplained (tampered meta, no origin): guard recorded
+    tampered = type(t)(**{**t.__dict__})
+    tampered.meta = {k: v for k, v in t.meta.items() if k != "injected_fault"}
+    rr3 = sb.rerun_from(tampered, step, "Avoid malformed_tool_call: validate arguments.")
+    assert rr3.outcome.success is False
+    assert rr3.meta["unexplained_failure"] is True
+
+
+def test_replay_intervene_rejects_degenerate_horizon_and_repeats():
+    sb, t = _prepared("q-trajaudit", "malformed_tool_call")
+    step = t.meta["injected_fault"]["step"]
+    with pytest.raises(ValueError, match="horizon"):
+        sb.replay_intervene(t, step, "edit", horizon=0)
+    with pytest.raises(ValueError, match="horizon"):
+        sb.replay_intervene(t, step, "edit", horizon=-1)
+    with pytest.raises(ValueError, match="n_repeats"):
+        sb.replay_intervene(t, step, "edit", n_repeats=0)
+
+
+def test_rerun_payload_and_qrels_not_aliased():
+    """One level deeper than object identity: mutating the rerun's payload
+    or qrels lists must not leak back into the original trajectory."""
+    sb, t = _prepared("q-trajaudit", "malformed_tool_call")
+    step = t.meta["injected_fault"]["step"]
+    rr = sb.rerun_from(t, step, "Avoid malformed_tool_call: validate arguments.")
+    rr.events[0].payload["injected"] = True
+    assert "injected" not in t.events[0].payload
+    rr.meta["qrels"]["evidence"].append("dX")
+    assert "dX" not in t.meta["qrels"]["evidence"]

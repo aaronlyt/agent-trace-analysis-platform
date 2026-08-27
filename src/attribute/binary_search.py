@@ -101,7 +101,7 @@ _ROUND_SYSTEM = (
 _REFINE_SYSTEM = (
     "You are an expert in multi-agent system failure attribution. The decisive "
     "error step has already been locked in by binary-search localization "
-    "(step {step}, agent {agent}) — do not change or question that "
+    "(step {step}, agent {agent}) -- do not change or question that "
     "localization. Based on the full trajectory, explain why this step is the "
     "decisive error (the earliest failure-flipping error, not the step where "
     "the symptom manifests), and give an actionable fix suggestion. You may "

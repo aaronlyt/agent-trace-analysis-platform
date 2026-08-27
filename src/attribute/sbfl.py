@@ -228,7 +228,7 @@ class SBFLAttributor(Attributor):
                         root_cause=(
                             f"SBFL spectrum prior: the action {u[1]}({u[2] or '-'}) "
                             f"concentrates in failing runs ({len(idxs)} times in this "
-                            "trajectory) and is rare in successful runs — statistically "
+                            "trajectory) and is rare in successful runs -- statistically "
                             "suspicious; treat as an L2 prior, not a final verdict"
                         ),
                         root_cause_code=None,

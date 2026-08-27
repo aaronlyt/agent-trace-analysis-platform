@@ -612,11 +612,14 @@ class ToySandbox:
         """Full re-solve from scratch with reflection feedback (a new episode,
         no prefix retained).
 
-        Fault state is taken from the **original trajectory** meta (rerun
-        trajectories have injected_fault stripped from meta; chaining it back
-        in would misjudge "no fault" and fake success -- the same convention
-        as rerun_from). Feedback consumption: a keyword hit removes the
-        fault; on a miss with an injected LLM, ask the LLM (semantic
+        Fault state is taken from the **original trajectory** meta. Rerun
+        trajectories have ``injected_fault`` stripped (round-2 GT evaluation
+        must not count them as fault traces) but carry ``origin_fault``, which
+        this lookup falls back to so a failed rerun remains recoverable;
+        failures with neither are guarded as unexplained (a clean rerun of
+        those would succeed and must not be claimed as recovery -- the same
+        convention as rerun_from). Feedback consumption: a keyword hit removes
+        the fault; on a miss with an injected LLM, ask the LLM (semantic
         matching of free-text feedback); with neither, the fault remains and
         the re-solve keeps failing.
         """
@@ -624,6 +627,12 @@ class ToySandbox:
         if task_id is None:
             raise ValueError(f"trajectory {trajectory.trace_id} has no task_id; cannot re-solve")
         inj = trajectory.meta.get("injected_fault") or {}
+        if not inj.get("kind"):
+            # chain recovery: rerun trajectories have injected_fault stripped
+            # (round-2 GT evaluation must not count them as fault traces); the
+            # carried origin_fault lets a *failed* rerun still be re-attributed
+            # and recovered later instead of being structurally unrecoverable
+            inj = trajectory.meta.get("origin_fault") or {}
         fault_kind = inj.get("kind")
         # ALL_FAULTS: feedback lookup covers the extended registry too
         # (retrieval_detour / agent_deadlock), so a fault-naming feedback can
@@ -639,22 +648,22 @@ class ToySandbox:
         new_run = execute(task_id, None if removed else fault)
         self._rr_counter += 1
         fault_active = (fault is not None and not removed) or unexplained_failure
+        success = new_run["outcome"]["success"] if not fault_active else False
         return Trajectory(
             trace_id=f"{trajectory.trace_id}-rs{self._rr_counter}",
             task=trajectory.task,
             events=self._flatten_to_events(new_run["spans"]),
             outcome=Outcome(
-                success=new_run["outcome"]["success"] if not fault_active else False,
-                score=new_run["outcome"]["success"] and not fault_active,
+                success=success,
+                score=1.0 if success else 0.0,
                 note=new_run["outcome"]["note"] if not fault_active else trajectory.outcome.note,
             ),
             meta={
-                # qrels shallow-copied: the re-solve meta must not share the
-                # original trajectory's mutable dict
-                **{k: dict(v) if k == "qrels" else v
-                   for k, v in trajectory.meta.items() if k != "injected_fault"},
+                **self._copy_meta(trajectory.meta),
                 "rerun_of": trajectory.trace_id,
                 "resolve_mode": "full_reresolve",
+                "unexplained_failure": unexplained_failure,
+                **({"origin_fault": dict(inj)} if fault_kind else {}),
                 "fault_removed": removed,
                 "feedback_snippet": feedback[:200],
             },
@@ -693,6 +702,9 @@ class ToySandbox:
         if task_id is None:
             raise ValueError(f"trajectory {trajectory.trace_id} has no task_id; cannot replay")
         inj = trajectory.meta.get("injected_fault") or {}
+        if not inj.get("kind"):
+            # chain recovery: see resolve -- failed reruns carry origin_fault
+            inj = trajectory.meta.get("origin_fault") or {}
         fault_kind = inj.get("kind")
         # ALL_FAULTS: same extended-registry coverage as resolve/replay_intervene
         fault = ALL_FAULTS.get(fault_kind) if fault_kind else None
@@ -719,8 +731,13 @@ class ToySandbox:
         # copy the retained prefix events: the rerun must not alias the
         # original trajectory's event objects (the closed-loop verification
         # round normalizes rerun events in place via canonical_events
-        # _normalize, which would rewrite the original's id/index otherwise)
-        prefix = [replace(ev) for ev in trajectory.events[:step]]
+        # _normalize, which would rewrite the original's id/index otherwise);
+        # payload dicts and refs lists are copied one level deeper so no
+        # in-place payload mutation can leak back either
+        prefix = [
+            replace(ev, payload=dict(ev.payload), refs=list(ev.refs))
+            for ev in trajectory.events[:step]
+        ]
         merged = list(prefix)
         bridge = self._prefix_bridge(flat, trajectory, step)
         new_pos = {s["id"]: i for i, s in enumerate(new_flat)}
@@ -757,26 +774,44 @@ class ToySandbox:
         # those would succeed and must not be claimed as recovery (same guard
         # as resolve)
         fault_active = (fault is not None and not removed) or unexplained_failure
-        note = new_run["outcome"]["note"] if not fault_active else trajectory.outcome.note
+        success = new_run["outcome"]["success"] if not fault_active else False
+        # outcome/verifier consistency: when the attribution step pointed at
+        # or past the original VERIFIER (e.g. at TASK_END, which out-of-range
+        # clamping also lands on), the retained prefix still shows the
+        # faulted verifier line while the "suffix" is only the clean TASK_END
+        # -- a clean re-execution must then not be reported as success: the
+        # visible stream's last verifier verdict wins
+        verifier_conflict = False
+        if success:
+            vline = next((e for e in reversed(merged) if e.kind == "VERIFIER"), None)
+            if vline is not None and not str(
+                vline.payload.get("content", "")
+            ).startswith("passed"):
+                verifier_conflict = True
+                success = False
         return Trajectory(
             trace_id=f"{trajectory.trace_id}-rr{self._rr_counter}",
             task=trajectory.task,
             events=merged,
             outcome=Outcome(
-                success=new_run["outcome"]["success"] if not fault_active else False,
-                score=new_run["outcome"]["success"] and not fault_active,
-                note=note,
+                success=success,
+                score=1.0 if success else 0.0,
+                note=(
+                    trajectory.outcome.note
+                    if (fault_active or verifier_conflict)
+                    else new_run["outcome"]["note"]
+                ),
             ),
             meta={
-                # qrels shallow-copied: the rerun meta must not share the
-                # original trajectory's mutable dict
-                **{k: dict(v) if k == "qrels" else v
-                   for k, v in trajectory.meta.items() if k != "injected_fault"},
+                **self._copy_meta(trajectory.meta),
                 "rerun_of": trajectory.trace_id,
                 "rerun_from_step": step,
                 "step_clamped": clamped,
                 "suffix_alignment": alignment,
                 "dropped_refs": dropped_refs,
+                "unexplained_failure": unexplained_failure,
+                "verifier_conflict": verifier_conflict,
+                **({"origin_fault": dict(inj)} if fault_kind else {}),
                 "fault_removed": removed,
                 "feedback_snippet": feedback[:200],
             },
@@ -832,7 +867,16 @@ class ToySandbox:
         task_id = (trajectory.raw or {}).get("task_id") or trajectory.meta.get("task_id")
         if task_id is None:
             raise ValueError(f"trajectory {trajectory.trace_id} has no task_id; cannot replay")
+        if horizon is not None and int(horizon) < 1:
+            # an empty window (horizon=0) would claim success with zero
+            # evidence; negative values would silently drop suffix events
+            raise ValueError(f"horizon must be >= 1 (got {horizon})")
+        if int(n_repeats) < 1:
+            raise ValueError(f"n_repeats must be >= 1 (got {n_repeats})")
         inj = trajectory.meta.get("injected_fault") or {}
+        if not inj.get("kind"):
+            # chain recovery: see resolve -- failed reruns carry origin_fault
+            inj = trajectory.meta.get("origin_fault") or {}
         fault_kind = inj.get("kind")
         fault = ALL_FAULTS.get(fault_kind) if fault_kind else None
         unexplained_failure = fault is None and not trajectory.outcome.success
@@ -891,7 +935,12 @@ class ToySandbox:
         results: list[Trajectory] = []
         for r in range(n_repeats):
             self._rr_counter += 1
-            merged = list(trajectory.events[:step])
+            # prefix copied (not aliased) with payload/refs one level deeper,
+            # same rationale as rerun_from
+            merged = [
+                replace(ev, payload=dict(ev.payload), refs=list(ev.refs))
+                for ev in trajectory.events[:step]
+            ]
             last_call_id = merged[-1].id if merged else None
             for k, span in enumerate(suffix):
                 idx = step + k
@@ -934,13 +983,15 @@ class ToySandbox:
                     ),
                 ),
                 meta={
-                    **{kk: vv for kk, vv in trajectory.meta.items() if kk != "injected_fault"},
+                    **self._copy_meta(trajectory.meta),
                     "rerun_of": trajectory.trace_id,
                     "replay_mode": "message_intervention",
                     "intervened_step": step,
                     "step_clamped": clamped,
                     "suffix_alignment": alignment,
                     "dropped_refs": dropped_refs,
+                    "unexplained_failure": unexplained_failure,
+                    **({"origin_fault": dict(inj)} if fault_kind else {}),
                     "intervention_applied": applied,
                     "intervention_applied_note": applied_note,
                     "intervention_on_onset_step": onset_targeted,
@@ -952,6 +1003,28 @@ class ToySandbox:
         return results
 
     # -- internals ------------------------------------------------------------
+
+    @staticmethod
+    def _copy_meta(meta: dict) -> dict:
+        """Copy a trajectory's meta for a rerun: drops ``injected_fault``
+        (round-2 GT evaluation must not count reruns as fault traces) and
+        copies mutable values one level deep (qrels evidence/gold lists,
+        nested dicts) so the rerun meta never aliases the original's."""
+        out: dict = {}
+        for k, v in meta.items():
+            if k == "injected_fault":
+                continue
+            if isinstance(v, dict):
+                out[k] = {
+                    kk: (list(vv) if isinstance(vv, list)
+                         else dict(vv) if isinstance(vv, dict) else vv)
+                    for kk, vv in v.items()
+                }
+            elif isinstance(v, list):
+                out[k] = list(v)
+            else:
+                out[k] = v
+        return out
 
     def _feedback_addresses(self, fault_kind: str, feedback: str) -> bool:
         """Whether the feedback names/targets this fault. Keyword first

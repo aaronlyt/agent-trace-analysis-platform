@@ -290,11 +290,17 @@ class RGUGAttributor(Attributor):
                     )
         if fallback is None:
             # no decision step after gold surfaced: prefer the last
-            # non-environment event (declared boundary, module docstring);
-            # only an all-env trace falls back to events[0] (TASK_START is
-            # env-owned — mirrors binary_search's declared s*=0 boundary)
+            # non-environment *acting* event (declared boundary, module
+            # docstring) — VERIFIER rows are environment-side feedback even
+            # when their agent column is populated; only an all-env trace
+            # falls back to events[0] (TASK_START is env-owned — mirrors
+            # binary_search's declared s*=0 boundary)
             fallback = next(
-                (e for e in reversed(events) if e.agent != "env"), events[0]
+                (
+                    e for e in reversed(events)
+                    if e.agent != "env" and e.kind != "VERIFIER"
+                ),
+                events[0],
             )
         return self._ug_hypothesis(
             fallback, g_star, gold,

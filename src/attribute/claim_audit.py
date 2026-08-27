@@ -203,6 +203,10 @@ class ClaimAuditAttributor(Attributor):
 
         valid: list[dict] = []
         invalid_records: list[dict] = []
+        # clamp-with-trace notes (all_at_once / tree_diagnosis discipline):
+        # an out-of-range judge step is clamped, but the raw value stays on
+        # record instead of being silently rewritten
+        clamp_notes: list[str] = []
         ledger_ids = {c["id"] for c in claims}
         for r in records.records:
             if r.support_status not in SUPPORT_LEVELS or r.verdict not in VERDICTS:
@@ -231,7 +235,13 @@ class ClaimAuditAttributor(Attributor):
                 )
                 continue
             if r.responsible_step is not None:
-                r.responsible_step = min(max(r.responsible_step, 0), n_events - 1)
+                clamped_step = min(max(r.responsible_step, 0), n_events - 1)
+                if clamped_step != r.responsible_step:
+                    clamp_notes.append(
+                        f"claim {r.claim_id}: responsible_step "
+                        f"{r.responsible_step}->{clamped_step} (judgement clamped)"
+                    )
+                r.responsible_step = clamped_step
             valid.append(r.model_dump())
 
         harmful = [
@@ -246,6 +256,7 @@ class ClaimAuditAttributor(Attributor):
                     "status": "no_harmful_claim",
                     "support_records": valid,
                     "invalid_support_records": invalid_records,
+                    "clamp_notes": clamp_notes,
                 },
             )
             return
@@ -270,11 +281,20 @@ class ClaimAuditAttributor(Attributor):
         assert isinstance(trace, TraceVerdict)
 
         step = min(max(trace.first_error_step, 0), n_events - 1)
+        if step != trace.first_error_step:
+            clamp_notes.append(
+                f"first_error_step {trace.first_error_step}->{step} (judgement clamped)"
+            )
         # Eq.3 earliest semantics: the reported first error cannot be later
         # than the earliest member of error_steps — reconcile instead of
         # trusting the LLM's field in isolation (e.g. first_error_step=9 with
         # error_steps=[5,9] is self-contradictory and resolves to 5)
-        error_steps = [min(max(s, 0), n_events - 1) for s in trace.error_steps]
+        error_steps = []
+        for s in trace.error_steps:
+            cs = min(max(s, 0), n_events - 1)
+            if cs != s:
+                clamp_notes.append(f"error_steps {s}->{cs} (judgement clamped)")
+            error_steps.append(cs)
         first_error_reconciled = False
         if error_steps and min(error_steps) < step:
             step = min(error_steps)
@@ -320,6 +340,7 @@ class ClaimAuditAttributor(Attributor):
                 "hypotheses": [hyp.to_dict()],
                 "support_records": valid,
                 "invalid_support_records": invalid_records,
+                "clamp_notes": clamp_notes,
                 "first_error_step": step,
                 "first_error_reconciled": first_error_reconciled,
                 "error_steps": error_steps,
