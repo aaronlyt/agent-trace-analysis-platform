@@ -56,7 +56,7 @@ def success_trace(trace_id: str = "t-ok-1") -> Trajectory:
         _ev(9, TOOL_CALL, "reporter", action="submit", refs=["e008"], phase="report",
             payload={"answer": "semantic saliency folding (d1)"}),
         _ev(10, VERIFIER, "verifier", refs=["e009"],
-            payload={"content": "passed: answer matches gold and cites a read document"}),
+            payload={"content": "passed: answer cites a read document and matches the expected method name"}),
         _ev(11, TASK_END, "env"),
     ]
     return Trajectory(

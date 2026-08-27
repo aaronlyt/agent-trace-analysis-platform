@@ -51,6 +51,29 @@ def test_fake_client_call_log_records_error(tmp_path):
     assert rec["ok"] is False and "LLMError" in rec["error"]
 
 
+def test_call_log_attach_truncates_previous_run(tmp_path):
+    """Re-attaching the same path restarts the audit file (one attach per
+    run: runtime.run_config attaches <run_dir>/llm_calls.jsonl exactly once
+    at run start, so rerunning into the same run directory must not append
+    a second run's calls -- previously 26 -> 52 -> 104 lines across demo
+    reruns, silently inflating per-run statistics)."""
+    path = tmp_path / "llm_calls.jsonl"
+    c1 = FakeLLMClient(responses=["a"])
+    c1.attach_call_log(path)
+    c1.complete([{"role": "user", "content": "q1"}], tag="run1")
+    c2 = FakeLLMClient(responses=["b", "b"])
+    c2.attach_call_log(path)   # a fresh run into the same directory
+    c2.complete([{"role": "user", "content": "q2"}], tag="run2a")
+    c2.complete([{"role": "user", "content": "q3"}], tag="run2b")
+    tags = [
+        json.loads(line)["tag"]
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert tags == ["run2a", "run2b"], (
+        f"the audit must contain only the latest run's calls, got {tags}"
+    )
+
+
 def test_openai_client_wrapper_logs_usage_without_network(tmp_path):
     """__new__ bypasses __init__ (no openai import, no network); after
     monkeypatching _create, verify the auditing wrapper: usage tokens land
@@ -270,6 +293,48 @@ def test_openai_structured_retry_costs_three_calls_not_four(tmp_path):
     result = c2.complete([{"role": "user", "content": "q"}], schema=Schema, tag="parse-ok")
     assert result.parsed.value == 7
     assert n2 == 3
+
+
+def test_openai_parse_retry_usage_sums_all_round_trips(tmp_path):
+    """Token accounting across parse-repair retries (review 2026-08-27 P1):
+    a logical call that needed retries paid for every HTTP round-trip, so
+    LLMResult.usage and the audit record must carry the SUM of all replies'
+    usage -- previously only the first response's usage was recorded,
+    undercounting a 3-request call by up to two thirds."""
+    from pydantic import BaseModel
+
+    import types
+
+    class Schema(BaseModel):
+        value: int
+
+    c = _bare_openai_client()
+    usages = [
+        {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        {"prompt_tokens": 30, "completion_tokens": 8, "total_tokens": 38},
+    ]
+    replies = iter(["not json", '{"value": 3}'])
+
+    def create_with_usage(payload_messages, use_model, tag):
+        c.http_requests += 1
+        r = _Reply(next(replies))
+        r.usage = types.SimpleNamespace(**usages[c.http_requests - 1])
+        return r
+
+    c._create = create_with_usage
+    c.attach_call_log(tmp_path / "usage.jsonl")
+    result = c.complete(
+        [{"role": "user", "content": "q"}], schema=Schema, tag="parse-usage"
+    )
+    assert result.parsed.value == 3
+    assert result.usage == {
+        "prompt_tokens": 40, "completion_tokens": 13, "total_tokens": 53,
+    }
+    rec = json.loads((tmp_path / "usage.jsonl").read_text(encoding="utf-8"))
+    assert rec["ok"] is True and rec["retries"] == 1
+    assert rec["usage"] == {
+        "prompt_tokens": 40, "completion_tokens": 13, "total_tokens": 53,
+    }
 
 
 def test_openai_schema_instruction_merges_into_first_system_message():

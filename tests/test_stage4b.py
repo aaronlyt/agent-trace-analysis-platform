@@ -84,10 +84,13 @@ class _Counting:
 def _strip_trace_blocks(text: str) -> str:
     """Remove the tau blocks (TRACE_BEGIN..TRACE_END) from a prompt blob.
 
-    Event-line content is the trajectory itself and is judge-visible by
-    construction in every view (e.g. a successful run's VERIFIER line embeds
-    the env pass note "matches gold ..."); the leak scan targets the
-    judge-side wrapping text around tau, so the blocks are stripped first."""
+    Kept for targeted wrapping-text checks only. Historically the gold-phrase
+    scan stripped TRACE blocks because "a successful run's VERIFIER line
+    embeds the env pass note 'matches gold ...'" was accepted as
+    judge-visible by construction -- that exemption WAS the leak (review
+    2026-08-27 P0): the verifier success note no longer names the gold
+    answer/doc, and the gold-phrase scan below now runs on the FULL blob
+    with no stripping."""
     while TRACE_BEGIN in text and TRACE_END in text:
         lo = text.index(TRACE_BEGIN)
         hi = text.index(TRACE_END, lo) + len(TRACE_END)
@@ -213,16 +216,17 @@ def test_claim_audit_success_and_contract():
 
 
 def test_claim_audit_include_success_no_gold_leak():
-    """P1 regression (audit 2026-08-27 §2-1): with include_success=True on a
-    successful trajectory, the outcome line used to carry the env verifier
-    note "matches gold 'all-at-once' (d3)" straight into the judge prompt.
-    The success path now renders include_outcome=False (the paper's input
-    protocol is question+span only), so no message contains an outcome line
-    or the gold phrase outside the tau block. Scripted responses drive all
-    three call sites (ledger + support + trace) on the success trajectory;
-    the VERIFIER event line inside tau still embeds the env pass note -- that
-    is the trajectory itself (judge-visible by construction in every view),
-    so the scan strips TRACE blocks before looking for "matches gold"."""
+    """P1 regression (audit 2026-08-27 §2-1, hardened by review 2026-08-27):
+    with include_success=True on a successful trajectory, the outcome line
+    used to carry the env verifier note "matches gold 'all-at-once' (d3)"
+    straight into the judge prompt. The success path renders
+    include_outcome=False (the paper's input protocol is question+span
+    only), and since the review-round fix env.verify's success note itself
+    no longer names the gold answer/doc -- so the "matches gold" scan runs
+    on the FULL blob, TRACE blocks included (the VERIFIER event line inside
+    tau was exactly the leak channel the old TRACE-stripping exemption
+    covered up). Scripted responses drive all three call sites (ledger +
+    support + trace) on the success trajectory."""
     ledger = Ledger(task_goal="g", claims=[LedgerClaim(
         id="c1", text="the answer is known from memory; no search needed",
         type="entity", status="finalized", introduced_step=1,
@@ -253,9 +257,9 @@ def test_claim_audit_include_success_no_gold_leak():
             f"success path must render without the outcome line "
             f"(tag={call['tag']})"
         )
-        assert "matches gold" not in _strip_trace_blocks(blob), (
-            f"gold phrase leaked outside the tau block (tag={call['tag']}): "
-            f"{_strip_trace_blocks(blob)[:120]}..."
+        assert "matches gold" not in blob, (
+            f"gold phrase leaked into the prompt (tag={call['tag']}): "
+            f"{blob[:120]}..."
         )
         low = blob.lower()
         for key in ("injected_fault", "ground_truth", "gold_doc", "gold_answer"):

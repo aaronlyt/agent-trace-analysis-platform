@@ -157,8 +157,14 @@ def test_judge_prompts_do_not_leak_ground_truth():
     info_withholding) but the rendered view contains neither trace_id nor
     meta; this assertion pins down that contract, preventing future prompt
     changes from introducing leaks.
+
+    "matches gold" additionally guards the verifier-success-note leak
+    (review 2026-08-27 P0): the VERIFIER event line is rendered into every
+    judge view, so a success note naming the gold answer/doc would hand the
+    oracle to the judge -- see test_success_verifier_line_carries_no_gold.
     """
-    gt_tokens = (*ALL_FAULTS, "injected_fault", "mast_code", "ground truth")
+    gt_tokens = (*ALL_FAULTS, "injected_fault", "mast_code", "ground truth",
+                 "matches gold")
     for kind in ALL_FAULTS:
         b, ctx = _bundle("q-trajaudit", kind)
         fake = FakeLLMClient()
@@ -173,6 +179,46 @@ def test_judge_prompts_do_not_leak_ground_truth():
             )
             for tok in gt_tokens:
                 assert tok not in blob, f"{kind}: prompt leaks {tok!r} (tag={call['tag']})"
+
+
+def test_success_verifier_line_carries_no_gold():
+    """Anti-leak regression (review 2026-08-27 P0), success path: on a
+    successful trajectory the VERIFIER event line enters every judge view
+    (render_trace emits all events), so the verifier success note must not
+    name the gold answer or the gold doc.
+
+    History: env.verify used to return "passed: ... matches gold
+    '<answer>' (<doc>)", which put the oracle straight into judge_eval
+    prompts (8 of 14 judge_eval calls in a fresh `atap demo` carried it);
+    the fault-roster test above never caught it because faulted trajectories
+    only ever see "failed:" notes. The scan is the FULL prompt blob -- no
+    TRACE-block stripping: the verifier line inside tau is exactly the leak
+    channel, not an exemption."""
+    for task, gold in (
+        ("q-trajaudit", "semantic saliency folding"),
+        ("q-drift", "claim ledger"),
+        ("q-who-when", "all-at-once"),
+    ):
+        b, ctx = _bundle(task)
+        assert b.trajectory.outcome.success, f"{task}: fixture must succeed"
+        fake = FakeLLMClient()
+        ctx.llm = fake
+        JudgeEvalAnalyzer().run_one(b, ctx)
+        MastJudgeClassifier().run_one(b, ctx)
+        AllAtOnceAttributor().run_one(b, ctx)
+        assert fake.calls, f"{task}: the judges were not called"
+        for call in fake.calls:
+            blob = " ".join(
+                str(m.get("content", "")) for m in call["messages"]
+            )
+            assert "matches gold" not in blob, (
+                f"{task}: verifier success note leaks the gold phrase "
+                f"(tag={call['tag']})"
+            )
+            assert f"gold '{gold}'" not in blob, (
+                f"{task}: verifier success note names the gold answer "
+                f"(tag={call['tag']})"
+            )
 
 
 def test_fewshot_step_numbers_do_not_collide_with_gt_onsets():

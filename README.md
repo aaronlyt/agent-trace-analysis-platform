@@ -60,7 +60,8 @@ uv venv .venv --python 3.12 && uv pip install -e ".[dev]"
 .venv/bin/python -c "import json,collections; \
 recs=[json.loads(l) for l in open('runs/demo/llm_calls.jsonl')]; \
 print(len(recs), dict(collections.Counter(r['tag'] for r in recs)))"
-# 26 {'judge_eval': 14, 'mast_judge': 6, 'all_at_once': 6}
+# 25 {'judge_eval': 13, 'mast_judge': 6, 'all_at_once': 6}
+# （重跑同目录，审计文件被截断重置，仍是 25 —— attach_call_log 一次 run 一次挂载）
 ```
 
 `atap demo` 的离线验收结果（seed=7，六种注入故障）：
@@ -68,8 +69,13 @@ print(len(recs), dict(collections.Counter(r['tag'] for r in recs)))"
 ```
 归因命中: step 6/6  agent 6/6  MAST 6/6  恢复 6/6
 round0: traces=7 failures=6 attributed=6 reruns=6(ok=6)
-round1: traces=7 failures=0   ← 重跑轨迹全部通过全流程闭环验证
+round1: traces=6 failures=0   ← 只有 6 条重跑轨迹进入闭环验证轮，全部通过
 ```
+
+> 说明（评审修复 2026-08-27）：验证轮**只喂重跑轨迹**——无 rerun 的原始
+> 轨迹（成功轨迹、未被恢复接管的失败轨迹）第一轮已经判过，重跑它们等于
+> 为相同工作再付一遍调用费（旧版 round1 traces=7、共 26 次调用；现
+> round1 traces=6、25 次调用，judge_eval 14→13）。
 
 > ⚠️ **离线"恢复 N/N"数字是构造性回环，不衡量判官/恢复能力**（与上文 CHIEF
 > 18/18 的 ⚠️ 同级别的 caveat，适用于 demo/阶段三/阶段四C 各处出现的"恢复
@@ -84,7 +90,8 @@ round1: traces=7 failures=0   ← 重跑轨迹全部通过全流程闭环验证
 阶段三全栈（24 条语料）离线验收：二分定位 **step 5/6、agent 6/6**；
 SBFL 频谱 4/6（miss 两例为方法边界：一次性动作被 γ 压制、内容级故障在
 动作谱不可见）；反馈注入恢复 6/6、闭环 failures=0；对比表
-`v3 15/18·147 calls vs SBFL 12/18·42 calls`。
+`v3 15/18·141 calls vs SBFL 12/18·42 calls`（v3 的调用数为验证轮收窄后
+的口径：只重跑 rerun 轨迹；147 为旧口径——验证轮整轮重跑）。
 
 阶段四A 确定性层离线验收（轮次三，2026-08-25）：**179 测试全绿**
 （154 旧 + 25 新，v3/sbfl/demo 数字全部回归不变）——

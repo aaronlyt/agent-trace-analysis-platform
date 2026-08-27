@@ -108,6 +108,7 @@ def _agent_at(bundle, step) -> str:
 class InducerClassifier(Classifier):
     stage = "classify"
     name = "inducer"
+    requires = (("classify", "mast_judge"),)   # consumes the judge's novel residual labels
 
     def run_one(self, bundle, ctx) -> None:
         bundle.put(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -195,3 +196,48 @@ def test_event_kinds_valid():
                 "TASK_START", "LLM_CALL", "TOOL_CALL", "TOOL_RESULT",
                 "AGENT_MESSAGE", "HANDOFF", "VERIFIER", "TASK_END",
             }
+
+
+def test_requires_validated_at_config_time():
+    """StageAlgorithm.requires + validate_against_registry (review
+    2026-08-27 P1): hard artifact dependencies fail the BUILD, not the run
+    -- previously sbfl without action_signature crashed mid-run ("missing
+    the represent/action_signature artifact") after earlier stages had
+    already paid for their work, and a recoverer without any attributor
+    silently no-op'd. Ordering matters within a stage too (inducer consumes
+    mast_judge's labels)."""
+    import atap  # noqa: F401  bootstrap registration
+    from atap.core.config import validate_against_registry
+
+    # missing exact dependency
+    with pytest.raises(ConfigError, match="sbfl.*requires.*represent/action_signature"):
+        validate_against_registry(config_from_dict(
+            {"stages": {"represent": ["canonical_events"], "attribute": ["sbfl"]}}
+        ))
+    # same-stage dependency listed after the consumer
+    with pytest.raises(ConfigError, match="inducer.*requires.*classify/mast_judge"):
+        validate_against_registry(config_from_dict(
+            {"stages": {"classify": ["inducer", "mast_judge"]}}
+        ))
+    # wildcard stage dependency: recoverer without any attributor
+    with pytest.raises(ConfigError, match="targeted_rerun.*at least one.*attribute"):
+        validate_against_registry(config_from_dict(
+            {"stages": {"analyze": ["judge_eval"], "recover": ["targeted_rerun"]}}
+        ))
+    # satisfied dependencies pass (mast_judge before inducer; attributor present)
+    validate_against_registry(config_from_dict(
+        {"stages": {"classify": ["mast_judge", "inducer"],
+                    "attribute": ["all_at_once"], "recover": ["feedback_injection"]}}
+    ))
+
+
+def test_all_shipped_configs_satisfy_requires():
+    """Every YAML under configs/ must pass the dependency validation -- the
+    check must not make any shipped composition unbuildable."""
+    import atap  # noqa: F401  bootstrap registration
+    from atap.core.config import load_config, validate_against_registry
+
+    shipped = sorted((Path(__file__).parent.parent / "configs").glob("*.yaml"))
+    assert len(shipped) >= 20
+    for p in shipped:
+        validate_against_registry(load_config(p))

@@ -63,6 +63,7 @@ _REFLECT_SYSTEM = (
 class FeedbackInjectionRecoverer(Recoverer):
     stage = "recover"
     name = "feedback_injection"
+    requires = (("attribute", "*"),)   # consumes bundle.hypotheses() from any attributor
 
     def run_one(self, bundle, ctx) -> None:
         if bundle.succeeded:

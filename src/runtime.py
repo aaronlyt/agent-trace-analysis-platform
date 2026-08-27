@@ -119,6 +119,7 @@ def run_config(
             merged.n_attributed += r.n_attributed
             merged.n_reruns += r.n_reruns
             merged.n_rerun_success += r.n_rerun_success
+            merged.n_errors += r.n_errors
             merged.stage_log.extend(r.stage_log)
             merged.bundle_summaries.extend(r.bundle_summaries)
         payload = merged.to_dict()

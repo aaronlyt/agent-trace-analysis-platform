@@ -152,15 +152,50 @@ def load_config(path: str | Path) -> PipelineConfig:
 
 
 def validate_against_registry(cfg: PipelineConfig) -> list[str]:
-    """Validate that algorithms resolve against the registry; returns the list
-    of algorithm descriptions (missing entries raise RegistryError directly)."""
-    from atap.core.registry import create, RegistryError
+    """Validate that algorithms resolve against the registry and their hard
+    artifact dependencies (``StageAlgorithm.requires``) are satisfied by the
+    SAME config, earlier in execution order; returns the list of algorithm
+    descriptions (missing entries raise RegistryError, dependency violations
+    ConfigError).
+
+    Dependency violations used to surface only mid-run (sbfl raising
+    "missing the represent/action_signature artifact" after earlier stages
+    had already paid for their work) -- this check moves that failure class
+    to config time, before any LLM call or artifact is produced."""
+    from atap.core.registry import RegistryError, create
+
+    specs = cfg.algorithms_in_order()
+    # first-occurrence position of each configured (stage, name)
+    positions: dict[tuple[str, str], int] = {}
+    for i, spec in enumerate(specs):
+        positions.setdefault((spec.stage, spec.name), i)
 
     descriptions: list[str] = []
-    for spec in cfg.algorithms_in_order():
+    for i, spec in enumerate(specs):
         try:
             algo = create(spec.stage, spec.name, **spec.params)
         except RegistryError as e:
             raise e
+        for rstage, rname in getattr(algo, "requires", ()):
+            if rname == "*":
+                satisfied = any(
+                    pos < i for (st, _n), pos in positions.items() if st == rstage
+                )
+                if not satisfied:
+                    raise ConfigError(
+                        f"stages.{spec.stage}[{spec.name}] requires at least one "
+                        f"{rstage}-stage algorithm configured before it (it "
+                        f"consumes that stage's artifacts); add one, or drop "
+                        f"{spec.name}"
+                    )
+            else:
+                pos = positions.get((rstage, rname))
+                if pos is None or pos >= i:
+                    raise ConfigError(
+                        f"stages.{spec.stage}[{spec.name}] requires "
+                        f"{rstage}/{rname} to be configured before it (it "
+                        f"consumes that artifact); add it to stages.{rstage} "
+                        f"or reorder it ahead of {spec.name}"
+                    )
         descriptions.append(algo.describe())
     return descriptions

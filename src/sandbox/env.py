@@ -208,4 +208,10 @@ def verify(task_id: str, answer: str, read_docs: list[str]) -> tuple[bool, str]:
         return False, "failed: answer missing required citation of a read doc id"
     if gold_answer.lower() not in answer.lower():
         return False, "failed: answer does not contain the correct method name"
-    return True, f"passed: answer cites read document and matches gold '{gold_answer}' ({gold_doc})"
+    # [leak fix, review 2026-08-27] the success note must not name the gold
+    # answer/doc: the VERIFIER event line is rendered into every judge view
+    # (render_trace emits all events), so the old wording leaked the oracle
+    # into judge_eval prompts on successful trajectories. "matches the
+    # expected method name" keeps the same observable information content
+    # for the agent (the verifier's public feedback) without the oracle.
+    return True, "passed: answer cites a read document and matches the expected method name"

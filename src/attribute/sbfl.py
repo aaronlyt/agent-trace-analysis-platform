@@ -68,6 +68,7 @@ def _unit_key(sig: dict[str, Any]) -> tuple[str, str, str]:
 class SBFLAttributor(Attributor):
     stage = "attribute"
     name = "sbfl"
+    requires = (("represent", "action_signature"),)   # spectrum units come from R5 signatures
 
     #: prior-level confidence (below the L1 judge's 0.7 tier) [engineering choice]
     PRIOR_CONFIDENCE = 0.35

@@ -60,12 +60,14 @@ class CountingLLM:
 def evaluate_against_gt(bundles) -> dict[str, Any]:
     """Hit statistics against the injected-fault GT (same criteria as atap demo).
 
-    ``top`` selection ties break on the earliest step ``(confidence, -step)``
-    -- the same rule as the recover consumers, so evaluation and recovery
-    act on one hypothesis. ``per_fault`` holds per-trace details keyed by
-    trace_id (the record carries the fault ``kind``); ``per_kind``
-    aggregates hits/total by fault kind and is what backs per-fault-kind
-    conclusions (multiple traces may share one kind).
+    ``top`` selection keeps the algorithm's own ranking (``max`` confidence;
+    see the inline note below for why it deliberately differs from the
+    recover consumers' ``(confidence, -step)`` tie-break). ``n_failed``
+    counts **injected-fault trajectories** (the GT denominator -- baseline
+    successes carry no GT), not observed failures. ``per_fault`` holds
+    per-trace details keyed by trace_id (the record carries the fault
+    ``kind``); ``per_kind`` aggregates hits/total by fault kind and is what
+    backs per-fault-kind conclusions (multiple traces may share one kind).
     """
     n_failed = step_hits = agent_hits = code_hits = 0
     recovered = closed_improved = 0

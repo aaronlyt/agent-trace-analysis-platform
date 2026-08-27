@@ -13,7 +13,7 @@ from atap.represent.hcg import HCGRepresenter
 from atap.represent.hierarchy_tree import HierarchyTreeRepresenter
 from atap.represent.idg import IDGRepresenter
 from atap.sandbox import ToySandbox
-from tests.helpers import _ev, failure_trace_ungrounded, success_trace
+from helpers import _ev, failure_trace_ungrounded, success_trace
 
 
 def _bundle(trace):

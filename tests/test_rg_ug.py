@@ -9,7 +9,7 @@ from atap.core.bundle import TrajectoryBundle
 from atap.core.context import RunContext
 from atap.core.registry import create
 from atap.sandbox import ToySandbox
-from tests.helpers import _ev
+from helpers import _ev
 from atap.core.schema import Outcome, Trajectory
 
 

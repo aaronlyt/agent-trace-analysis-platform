@@ -42,8 +42,9 @@ def attach_run_log(path: str | Path) -> None:
     old file handler).
 
     Called by runtime.run_config for each run: compare's multiple runs swap
-    files in sequence, so each run.log only contains logs from its own run
-    onward.
+    files in sequence; the handler opens in "w" mode, so each run.log
+    contains exactly its own run's logs (a rerun into the same directory
+    restarts the file instead of appending).
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -55,6 +56,8 @@ def attach_run_log(path: str | Path) -> None:
         if isinstance(h, logging.FileHandler):
             logger.removeHandler(h)
             h.close()
-    fh = logging.FileHandler(p, encoding="utf-8")
+    # mode="w": a rerun into the same directory restarts its run.log rather
+    # than appending (each run_config attaches exactly once, at run start)
+    fh = logging.FileHandler(p, encoding="utf-8", mode="w")
     fh.setFormatter(logging.Formatter(_FMT, datefmt="%Y-%m-%d %H:%M:%S"))
     logger.addHandler(fh)

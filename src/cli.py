@@ -200,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--config", required=True)
     p_run.add_argument("--out", default="runs/run")
 
-    p_list = sub.add_parser("list", help="list registered algorithms")
+    sub.add_parser("list", help="list registered algorithms")
 
     p_demo = sub.add_parser("demo", help="offline end-to-end demo (FakeLLM deterministic judge)")
     p_demo.add_argument("--seed", type=int, default=7)

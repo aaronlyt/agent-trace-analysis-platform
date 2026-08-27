@@ -130,9 +130,7 @@ def build_source(spec: dict):
 
 
 def build_store(spec: dict | None, run_dir: str):
-    """Assemble the ArtifactStore from config (defaults to run_dir/artifacts)."""
-    from atap.io.base import ArtifactStore
-
+    """Assemble the artifact store from config (defaults to run_dir/artifacts)."""
     if spec is None:
         return JSONLArtifactStore(Path(run_dir) / "artifacts")
     kind = spec.get("type", "jsonl")

@@ -173,6 +173,30 @@ class OpenAICompatibleLLMClient(CallLogMixin):
             "total_tokens": getattr(u, "total_tokens", None),
         }
 
+    @staticmethod
+    def _merge_usage(a: dict[str, int] | None,
+                     b: dict[str, int] | None) -> dict[str, int] | None:
+        """Sum two per-response usage dicts (per key; a missing side keeps
+        the present side, both-missing stays None) -- a logical call that
+        needed parse-repair retries paid for every reply, so its recorded
+        usage must be the sum, not the first response's numbers."""
+        if a is None:
+            return b
+        if b is None:
+            return a
+        out: dict[str, int] = {}
+        for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            x, y = a.get(k), b.get(k)
+            if x is None and y is None:
+                out[k] = None
+            elif x is None:
+                out[k] = y
+            elif y is None:
+                out[k] = x
+            else:
+                out[k] = x + y
+        return out
+
     def complete(
         self,
         messages: list["ChatMessage"],
@@ -292,4 +316,9 @@ class OpenAICompatibleLLMClient(CallLogMixin):
                 )
                 resp = self._create(retry_messages, use_model, tag)
                 text = resp.choices[0].message.content or ""
+                # token accounting must cover every HTTP round-trip of this
+                # logical call (the initial reply + each parse-repair reply),
+                # not just the first response (previously the audit recorded
+                # the first reply's usage, undercounting by up to 2/3)
+                usage = self._merge_usage(usage, self._usage_dict(resp))
         raise LLMError(f"structured parsing still failing after retries (tag={tag}): {last_err}")

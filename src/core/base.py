@@ -34,10 +34,22 @@ STAGE_ORDER: tuple[str, ...] = (
 
 
 class StageAlgorithm(ABC):
-    """Base class for pipeline algorithms. Subclasses must set ``stage`` and ``name``."""
+    """Base class for pipeline algorithms. Subclasses must set ``stage`` and ``name``.
+
+    ``requires`` declares hard artifact dependencies on other algorithms --
+    (stage, name) pairs this algorithm crashes without (it reads
+    ``bundle.get(stage, name)`` and raises when absent). The wildcard name
+    ``"*"`` means "any algorithm of that stage" (e.g. recoverers consume
+    ``bundle.hypotheses()`` from whichever attribution algorithm ran).
+    validate_against_registry enforces it at config/assembly time -- missing
+    or later-positioned dependencies fail the build instead of crashing
+    (or silently no-op-ing) mid-run; trajectory-meta dependencies (e.g.
+    rg_ug's qrels) stay runtime-checked by nature.
+    """
 
     stage: ClassVar[str]
     name: ClassVar[str]
+    requires: ClassVar[tuple[tuple[str, str], ...]] = ()
 
     def __init__(self, **params: Any) -> None:
         self.params: dict[str, Any] = dict(params)

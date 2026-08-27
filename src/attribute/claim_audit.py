@@ -35,13 +35,13 @@ trajectories keep the outcome line (the paper's input protocol is
 question+span text only; this follows the framework's judge_view convention
 — the marker is always FAILURE, and env failure notes name neither the gold
 answer nor the gold doc), while successful trajectories under
-include_success=True render **without** the outcome line: the success note
-carries "matches gold '<answer>' (<doc>)" (env.py verifier text) and would
-otherwise leak the gold answer into the judge prompt; the VERIFIER event
-line inside tau still embeds that note — environment feedback inside the
-trajectory is judge-visible by construction in every view (it is tau
-itself, not a judge-side addition); the pseudo-judge's claim_* handlers
-never read the outcome line, so offline acceptance is unaffected; (2)
+include_success=True render **without** the outcome line: since the review
+fix of 2026-08-27 env.verify's success note names neither the gold answer
+nor the gold doc ("matches the expected method name"), so neither the
+outcome line nor the VERIFIER event line inside tau carries the oracle
+(the old wording "matches gold '<answer>' (<doc>)" leaked it into every
+judge view); the pseudo-judge's claim_* handlers never read the outcome
+line, so offline acceptance is unaffected; (2)
 successful trajectories
 are skipped by default (the paper reports 36.9% of successful trajectories
 still contain process errors, and Case Study 2 is exactly "the answer is right
@@ -155,6 +155,7 @@ _T_SYSTEM = (
 class ClaimAuditAttributor(Attributor):
     stage = "attribute"
     name = "claim_audit"
+    requires = (("represent", "claim_ledger"),)   # audits the R3 ledger
 
     def run_one(self, bundle, ctx) -> None:
         t = bundle.trajectory
@@ -179,13 +180,14 @@ class ClaimAuditAttributor(Attributor):
             raise RuntimeError("claim_audit requires an LLM client (RunContext.llm)")
 
         n_events = len(t.events)
-        # [P1 leak fix, audit 2026-08-27] A successful trajectory's outcome
-        # line carries the env verifier note "matches gold '<answer>'
+        # [P1 leak fix, audit 2026-08-27; verifier note itself fixed in the
+        # 2026-08-27 review round] A successful trajectory's outcome line
+        # used to carry the env verifier note "matches gold '<answer>'
         # (<doc>)" -- under include_success=True that would put the gold
-        # answer into the judge prompt. The paper's input protocol is
-        # question+span only, so the success path renders without the
-        # outcome line; failed trajectories keep it (always FAILURE, and
-        # env failure notes name neither the gold answer nor the gold doc).
+        # answer into the judge prompt. The success path renders without
+        # the outcome line; failed trajectories keep it (always FAILURE,
+        # and env notes -- success or failure -- name neither the gold
+        # answer nor the gold doc).
         view = judge_view(bundle, include_outcome=not bundle.succeeded)
         claims_json = "\n".join(_claim_line(c) for c in claims)
         result = ctx.llm.complete(

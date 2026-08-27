@@ -197,7 +197,10 @@ def test_refine_disabled_uses_mechanical_fields():
 
 
 def test_prompts_do_not_leak_ground_truth():
-    gt_tokens = (*FAULTS, "injected_fault", "mast_code", "ground truth")
+    # "matches gold" guards the verifier-success-note leak channel (the
+    # VERIFIER event line is rendered into the segment views)
+    gt_tokens = (*FAULTS, "injected_fault", "mast_code", "ground truth",
+                 "matches gold")
     for kind in FAULTS:
         b, ctx = _bundle("q-trajaudit", kind)
         fake = ctx.llm

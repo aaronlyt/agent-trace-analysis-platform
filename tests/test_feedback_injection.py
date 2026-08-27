@@ -171,7 +171,10 @@ def test_reflection_prompt_no_gt_leak(kind):
     call fires; the reflection prompt must contain no ground-truth keys /
     fault-type words. Parametrized over all six standard faults (fourth audit
     round 2026-08-27: it previously covered info_withholding only)."""
-    gt_tokens = (*FAULTS, "injected_fault", "mast_code", "ground truth")
+    # "matches gold" guards the verifier-success-note leak channel (the
+    # VERIFIER event line is rendered into the re-solve / reflection views)
+    gt_tokens = (*FAULTS, "injected_fault", "mast_code", "ground truth",
+                 "matches gold")
     b, ctx = _bundle("q-trajaudit", kind)
     fake = ctx.llm
     # rewrite the top hypothesis into a weak feedback without keywords,

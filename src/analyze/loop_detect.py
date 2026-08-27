@@ -62,6 +62,7 @@ def _is_validation_command(sig: dict[str, Any]) -> bool:
 class LoopDetectAnalyzer(Analyzer):
     stage = "analyze"
     name = "loop_detect"
+    requires = (("represent", "action_signature"),)   # R5 signatures are the input unit
 
     def run_one(self, bundle, ctx) -> None:
         art = bundle.get("represent", "action_signature")

@@ -104,8 +104,12 @@ def test_closed_loop_second_round_all_pass(e2e):
     bundles, reports, _ = e2e
     assert len(reports) == 2  # initial round + closed-loop verification round
     assert reports[0].n_failures == 6
+    # the verification round feeds only the reruns (6), not all originals
+    # (7) -- re-judging untouched originals re-paid identical work
+    assert reports[1].n_traces == 6
     assert reports[1].n_failures == 0  # all rerun trajectories pass the full-pipeline verification
     assert reports[1].n_attributed == 0
+    assert reports[1].n_errors == 0
     # origins without a rerun carry no verification evidence (verify is None)
     ok = next(b for b in bundles if b.succeeded)
     loop = ok.get("recover", "closed_loop")
@@ -121,9 +125,11 @@ def test_artifacts_persisted(e2e):
     assert len(files) >= 7 * 5 + 1
     report = json.loads((arts / "report.json").read_text(encoding="utf-8"))
     assert report["n_reruns"] == 6 and report["n_rerun_success"] == 6
-    # per-round breakdown: n_traces is the round-inclusive total (7 + 7),
-    # the by-round lists expose the initial vs verification round split
-    assert report["n_traces_by_round"] == [7, 7]
+    # per-round breakdown: n_traces is the round-inclusive total (7 + 6 --
+    # the verification round feeds only the 6 reruns, not all 7 originals;
+    # review 2026-08-27), the by-round lists expose the initial vs
+    # verification round split
+    assert report["n_traces_by_round"] == [7, 6]
     assert report["n_failures_by_round"] == [6, 0]
 
 

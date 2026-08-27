@@ -129,6 +129,77 @@ def test_pipeline_last_reruns_initialized():
     assert Pipeline([]).last_reruns == []   # explicit state, no getattr
 
 
+def test_pipeline_isolates_algorithm_crash_and_flushes_earlier_stages(tmp_path):
+    """Per-algorithm error isolation + incremental persistence (review
+    2026-08-27 P1): an algorithm crashing mid-corpus (historically e.g.
+    binary_search raising LLMError when the judge answered neither upper
+    nor lower) must not abort the run -- earlier stages' artifacts survive
+    on disk, the failed algorithm leaves an error artifact, later stages
+    still execute, and the report counts the error."""
+    from atap.core.context import RunContext
+    from atap.core.pipeline import Pipeline, PipelineReport
+
+    class _Good(StageAlgorithm):
+        stage = "represent"
+        name = "good"
+
+        def run_one(self, bundle, ctx):
+            bundle.put("represent", "good", {"trace": bundle.trace_id})
+
+    class _Boom(StageAlgorithm):
+        stage = "attribute"
+        name = "boom"
+        fired = False
+
+        def run_one(self, bundle, ctx):
+            if _Boom.fired:
+                raise RuntimeError("LLMError: judge answered neither upper nor lower")
+            _Boom.fired = True   # first bundle succeeds, second crashes
+
+        def run_corpus(self, bundles, ctx):
+            for b in bundles:
+                self.run_one(b, ctx)
+
+    class _After(StageAlgorithm):
+        stage = "recover"
+        name = "after"
+        ran_on = []
+
+        def run_one(self, bundle, ctx):
+            _After.ran_on.append(bundle.trace_id)
+            bundle.put("recover", "after", {"ok": True})
+
+    _Boom.fired = False   # reset class-level state (test may rerun in-session)
+    traces = [success_trace("t0"), success_trace("t1")]
+    store = JSONLArtifactStore(tmp_path / "arts")
+    ctx = RunContext(run_dir=str(tmp_path), llm=None, store=store)
+    pipe = Pipeline([_Good(), _Boom(), _After()])
+    bundles, report = pipe.run(traces, ctx)
+
+    # the run completed; the crash was recorded, not propagated
+    assert isinstance(report, PipelineReport)
+    assert report.n_errors == 1
+    assert any("attribute/boom -> FAILED" in line for line in report.stage_log)
+    # later stages still executed on every bundle
+    assert sorted(_After.ran_on) == ["t0", "t1"]
+    # the failed algorithm left an explicit error artifact (no silent gap)
+    for b in bundles:
+        assert b.get("attribute", "boom") == {
+            "status": "error",
+            "error": "RuntimeError: LLMError: judge answered neither upper nor lower",
+            "isolated": True,
+        }
+    # earlier + later stages' artifacts were already persisted (incremental
+    # flush), not only at the end of the run
+    for tid in ("t0", "t1"):
+        assert (tmp_path / "arts" / tid / "represent__good.json").exists()
+        assert (tmp_path / "arts" / tid / "attribute__boom.json").exists()
+        assert (tmp_path / "arts" / tid / "recover__after.json").exists()
+    # persisted report carries the error count
+    store.save_report("report.json", report.to_dict())
+    assert json_load(tmp_path / "arts" / "report.json")["n_errors"] == 1
+
+
 def test_cli_run_prints_actual_artifacts_dir(tmp_path, capsys):
     """The run command prints the artifact location resolved from the actual
     store config (a redirected store.dir must be reflected, not the

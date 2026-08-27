@@ -38,6 +38,10 @@ class PipelineReport:
     n_attributed: int = 0
     n_reruns: int = 0
     n_rerun_success: int = 0
+    # algorithm-level failures isolated by Pipeline.run (a crashing
+    # algorithm no longer aborts the run: its error is recorded here, an
+    # error artifact marks the affected bundles, later stages continue)
+    n_errors: int = 0
     stage_log: list[str] = field(default_factory=list)
     bundle_summaries: list[str] = field(default_factory=list)
 
@@ -49,6 +53,7 @@ class PipelineReport:
             "n_attributed": self.n_attributed,
             "n_reruns": self.n_reruns,
             "n_rerun_success": self.n_rerun_success,
+            "n_errors": self.n_errors,
             "stage_log": self.stage_log,
             "bundle_summaries": self.bundle_summaries,
         }
@@ -64,6 +69,21 @@ class Pipeline:
         # overwritten on every run)
         self.last_reruns: list["Trajectory"] = []
 
+    @staticmethod
+    def _flush(bundles: list["TrajectoryBundle"], ctx: "RunContext") -> None:
+        """Persist all in-memory artifacts to the store (no-op without one).
+
+        Called after every algorithm so partial runs survive a later crash;
+        the end-of-run persistence in runtime.run_config re-saves the same
+        content (idempotent overwrite), not double-writing.
+        """
+        if ctx.store is None:
+            return
+        for b in bundles:
+            for stage, arts in b.artifacts.items():
+                for name, art in arts.items():
+                    ctx.store.save_artifact(b.trace_id, stage, name, art)
+
     def run(
         self, trajectories: list["Trajectory"], ctx: "RunContext"
     ) -> tuple[list["TrajectoryBundle"], PipelineReport]:
@@ -78,12 +98,42 @@ class Pipeline:
             for algo in self.algorithms:
                 if algo.stage != stage:
                     continue
+                algo_name = getattr(algo, "name", type(algo).__name__)
                 t0 = time.time()
-                algo.run_corpus(bundles, ctx)
-                report.stage_log.append(
-                    f"{stage}/{getattr(algo, 'name', type(algo).__name__)} "
-                    f"-> {len(bundles)} bundles in {time.time() - t0:.3f}s"
-                )
+                # per-algorithm error isolation (review 2026-08-27 P1): one
+                # crashing algorithm (e.g. binary_search's LLMError when the
+                # judge answers neither upper nor lower) must not discard the
+                # whole run's completed work. Granularity is the algorithm,
+                # not the bundle: cross-trajectory algorithms (sbfl & co.)
+                # own an internal run_corpus loop the pipeline cannot see
+                # into; a class of missing-dependency crashes is instead
+                # caught at config time via StageAlgorithm.requires.
+                try:
+                    algo.run_corpus(bundles, ctx)
+                except Exception as e:  # noqa: BLE001 - isolation is the point
+                    report.n_errors += 1
+                    err = f"{type(e).__name__}: {e}"
+                    report.stage_log.append(
+                        f"{stage}/{algo_name} -> FAILED after "
+                        f"{time.time() - t0:.3f}s: {err}"
+                    )
+                    for b in bundles:
+                        if b.artifacts.get(stage, {}).get(algo_name) is None:
+                            b.put(stage, algo_name, {
+                                "status": "error",
+                                "error": err[:500],
+                                "isolated": True,
+                            })
+                else:
+                    report.stage_log.append(
+                        f"{stage}/{algo_name} "
+                        f"-> {len(bundles)} bundles in {time.time() - t0:.3f}s"
+                    )
+                # incremental persistence: flush after every algorithm
+                # attempt (success or failure), so a later crash never loses
+                # earlier stages' artifacts (save_artifact is an idempotent
+                # overwrite of <trace>/<stage>__<name>.json)
+                self._flush(bundles, ctx)
 
         report.n_attributed = sum(1 for b in bundles if b.hypotheses())
         rerun_traces: list[Trajectory] = []
@@ -133,7 +183,15 @@ class Pipeline:
                 origin = t.meta.get("rerun_of")
                 if origin:
                     rerun_by_origin[origin] = t
-            current = [rerun_by_origin.get(t.trace_id, t) for t in trajectories]
+            # the verification round feeds ONLY the reruns: originals without
+            # a rerun (successes, or failures no recoverer picked up) were
+            # already judged/attribution-processed in the first round --
+            # re-running them re-judged identical work at full cost
+            # (review 2026-08-27: 7 of 7 trajectories re-entered round 1
+            # although only 6 carried a rerun). No-rerun origins keep their
+            # first-round artifacts and simply carry no verification
+            # evidence (verify is None, as below).
+            current = list(rerun_by_origin.values())
             verify_bundles, verify_report = self.run(current, ctx)
             reports.append(verify_report)
             verify_bundle_by_trace = {b.trace_id: b for b in verify_bundles}

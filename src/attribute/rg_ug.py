@@ -118,7 +118,7 @@ class RGUGAttributor(Attributor):
             if ev.kind == "TOOL_CALL" and (ev.action or "") == "search":
                 current = {
                     "k": len(episodes), "start_index": ev.index,
-                    "agent": ev.agent, "docs": [], "events": [ev],
+                    "agent": ev.agent, "docs": [],
                 }
                 episodes.append(current)
                 continue
@@ -134,12 +134,10 @@ class RGUGAttributor(Attributor):
                 # declared in the module docstring]
                 current = {
                     "k": len(episodes), "start_index": ev.index,
-                    "agent": ev.agent, "docs": [], "events": [],
+                    "agent": ev.agent, "docs": [],
                     "implicit": True,
                 }
                 episodes.append(current)
-            if current is not None:
-                current["events"].append(ev)
             if ev.kind == "TOOL_RESULT" and (ev.action or "") == "search":
                 if current is not None:
                     current["docs"] += _parse_docs(str(ev.payload.get("content", "")))
@@ -153,7 +151,6 @@ class RGUGAttributor(Attributor):
         for ep in episodes:
             ep["R"] = sorted(set(ep["docs"]) & evidence)
             del ep["docs"]
-            del ep["events"]
 
         cumulative: set[str] = set()
         first_gold_hit: int | None = None
@@ -174,7 +171,9 @@ class RGUGAttributor(Attributor):
         if t.outcome.success:
             label = "correct"
         elif not g_star:
-            label = "RG_directional" if not (c_m & evidence) else "RG_last_hop"
+            # c_m is already evidence-scoped (every R_k = docs_k ∩ E), so the
+            # paper's C_m ∩ E test degenerates to the emptiness of c_m itself
+            label = "RG_directional" if not c_m else "RG_last_hop"
         else:
             label = "UG_true_extraction" if g_star == gold else "UG_boundary"
 

@@ -37,3 +37,9 @@ packages = [
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+# make the repo root importable regardless of invocation style: tests import
+# helpers via both `from helpers import ...` and `from tests.helpers import ...`
+# (the latter requires the root on sys.path -- previously only
+# `python -m pytest` from the repo root provided it; bare `pytest` failed
+# collection with ModuleNotFoundError: No module named 'tests')
+pythonpath = ["."]

@@ -51,6 +51,7 @@ from atap.recover.base import Recoverer
 class TargetedRerunRecoverer(Recoverer):
     stage = "recover"
     name = "targeted_rerun"
+    requires = (("attribute", "*"),)   # consumes bundle.hypotheses() from any attributor
 
     def run_one(self, bundle, ctx) -> None:
         if bundle.succeeded:

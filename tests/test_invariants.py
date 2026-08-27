@@ -1,6 +1,15 @@
 """Architecture invariant tests -- enforce "low coupling, one-way flow"
 via the import graph.
 
+Scope caveat (review 2026-08-27): these rules constrain the IMPORT graph
+only. Runtime dependencies that cross those same boundaries without an
+import remain invisible here -- e.g. runtime injects ``ToySandbox(llm=
+ctx.llm)`` so sandbox code calls the LLM protocol at run time while rule 4
+stays green, and algorithms consume each other's artifacts through
+bundle.get(stage, name) string keys (that data-contract layer is what
+StageAlgorithm.requires + validate_against_registry now check at build
+time). Do not read a green run of this file as full dependency coverage.
+
 Rules (matching the README architecture conventions):
 1. core/** may only import atap.core (+ stdlib/pydantic/lazy yaml);
 2. algorithm modules (files in stage packages other than base/__init__/
