@@ -1,6 +1,6 @@
 # atap — Agent 轨迹分析与错误归因平台
 
-模型设置：nvidia/nemotron-3.5-lightning:free（密钥走环境变量 `OPENAI_API_KEY`，绝不落盘。历史版本曾在这一行误贴明文 OpenRouter key——该 key 应视为已泄露并立即吊销，且已进入本地 git 历史，需要 `git filter-repo` 清洗。）
+模型设置：nvidia/nemotron-3.5-lightning:free（密钥走环境变量 `OPENAI_API_KEY`，绝不落盘。历史版本曾在这一行误贴明文 OpenRouter key——该 key 应视为已泄露并**立即在 OpenRouter 后台吊销**（此事代码层无法代办）；本地 git 历史已于 2026-08-27 用 `git filter-repo --replace-text` 全量清洗并复验无残留，清洗前完整备份在仓库外 `../atap-pre-cleanup-backup.bundle`，清洗时仓库无任何远端、未曾外推。）
 
 
 复现 [《Agent 轨迹分析与错误归因：整体流程·架构·算法与文献》](../../paper_research/general/papers/research_surveys/agents/error_analysis/整体流程架构与算法文献.md)
