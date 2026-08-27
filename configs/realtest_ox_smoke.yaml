@@ -1,0 +1,35 @@
+# Real LLM smoke test (OpenRouter stealth/ox-alpha, budget ~50 calls/day: 26 calls in this config)
+# API key comes from environment variables: OPENAI_API_KEY (sk-or-v1-...), OPENAI_BASE_URL=https://openrouter.ai/api/v1
+run_name: realtest-ox-smoke
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/demo/traces.jsonl
+
+llm:
+  type: openai
+  model: stealth/ox-alpha
+  temperature: 0.0
+  request_interval: 3.0        # OpenRouter free tier: 20 RPM
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+  analyze:
+    - name: judge_eval
+      params:
+        only_failures: false   # Successful trajectories are also evaluated (score baseline)
+  classify:
+    - mast_judge
+  attribute:
+    - all_at_once
+  recover:
+    - name: targeted_rerun
+      params:
+        max_rounds: 5

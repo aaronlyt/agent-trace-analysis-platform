@@ -1,0 +1,36 @@
+# Real LLM smoke test (OpenRouter free tier nvidia/nemotron-3-ultra-550b-a55b:free,
+# budget ~50 calls/day per model: 26 calls in this config)
+# API key comes from environment variables: OPENAI_API_KEY (sk-or-v1-...), OPENAI_BASE_URL=https://openrouter.ai/api/v1
+run_name: realtest-nemotron-ultra-smoke
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/demo/traces.jsonl
+
+llm:
+  type: openai
+  model: "nvidia/nemotron-3-ultra-550b-a55b:free"
+  temperature: 0.0
+  request_interval: 3.0        # Free-tier rate limits are tighter
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+  analyze:
+    - name: judge_eval
+      params:
+        only_failures: false
+  classify:
+    - mast_judge
+  attribute:
+    - all_at_once
+  recover:
+    - name: targeted_rerun
+      params:
+        max_rounds: 5

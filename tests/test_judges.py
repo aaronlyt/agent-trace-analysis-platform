@@ -1,4 +1,5 @@
-"""判官/归因算法测试：pseudo_judge 解析、FakeLLM 驱动三算法、契约校验。"""
+"""Judge/attribution algorithm tests: pseudo_judge parsing, FakeLLM-driven
+three algorithms, contract checks."""
 
 from __future__ import annotations
 
@@ -13,8 +14,8 @@ from atap.core.context import RunContext
 from atap.core.registry import create
 from atap.llm.fake_client import FakeLLMClient
 from atap.llm.pseudo_judge import _parse_block
-from atap.sandbox import ToySandbox
-from atap.sandbox.faults import FAULTS
+from atap.sandbox import ToySandbox, env
+from atap.sandbox.faults import ALL_FAULTS
 
 
 def _bundle(task="q-trajaudit", fault=None):
@@ -90,7 +91,7 @@ def test_all_at_once_emits_hypothesis_contract():
     assert h.agent == gt["agent"] and h.step == gt["step"]
     assert h.root_cause_code == gt["mast_code"]
     assert h.fix_suggestion and "malformed_tool_call" in h.fix_suggestion
-    assert h.evidence and any("step" not in e for e in h.evidence)  # 引文存在
+    assert h.evidence and any("step" not in e for e in h.evidence)  # citations exist
     assert 0.0 <= h.confidence <= 1.0
 
 
@@ -115,52 +116,149 @@ def test_all_at_once_clamps_bad_step_and_agent():
 
 
 def test_judges_require_r0_events():
-    t = ToySandbox().generate("q-trajaudit")  # 未拍平
+    t = ToySandbox().generate("q-trajaudit")  # not flattened
     b = TrajectoryBundle(t)
     with pytest.raises(ValueError, match="canonical_events"):
         JudgeEvalAnalyzer().run_one(b, RunContext(llm=FakeLLMClient()))
 
 
 def test_parse_structured_tolerates_reasoning_noise():
-    """推理型模型加固：思考文本/围栏/单引号 dict 均不影响结构化解析。"""
+    """Hardening for reasoning models: thinking text / fences / single-quoted
+    dicts all leave structured parsing unaffected."""
     from atap.analyze.judge_eval import JudgeVerdict
     from atap.llm.base import parse_structured
 
-    # 1) 思考文本在前（其中含伪花括号片段），真 JSON 在后
+    # 1) thinking text first (containing fake brace fragments), the real JSON after
     noisy = (
         'Let me think... the schema needs {"score"} maybe { \'x\': 1 }.\n'
         "After analysis: {\"score\": 2.5, \"summary\": \"ok\", \"findings\": []}"
     )
     assert parse_structured(noisy, JudgeVerdict).score == 2.5
-    # 2) markdown 围栏包裹
-    fenced = "结论如下：\n```json\n{\"score\": 9.0, \"summary\": \"s\", \"findings\": []}\n```"
+    # 2) wrapped in a markdown fence
+    fenced = "The conclusion is as follows:\n```json\n{\"score\": 9.0, \"summary\": \"s\", \"findings\": []}\n```"
     assert parse_structured(fenced, JudgeVerdict).score == 9.0
-    # 3) 单引号 Python 风格 dict（literal_eval 回退）
+    # 3) a single-quoted Python-style dict (literal_eval fallback)
     single = "{'score': 5.0, 'summary': 's', 'findings': []}"
     assert parse_structured(single, JudgeVerdict).score == 5.0
-    # 4) 字符串字面量内的花括号不干扰平衡扫描
+    # 4) braces inside string literals do not disturb the balance scan
     braces_in_str = '{"score": 1.0, "summary": "has } brace { inside", "findings": []}'
     assert parse_structured(braces_in_str, JudgeVerdict).score == 1.0
 
 
 def test_judge_prompts_do_not_leak_ground_truth():
-    """防泄漏回归：三个判官的输入 prompt 绝不含 ground truth 键或故障类型词。
+    """Anti-leak regression: the input prompts of the three judges must
+    never contain ground-truth keys or fault-type words.
 
-    trace_id 含故障名（如 q-trajaudit--info_withholding）但渲染视图不含
-    trace_id/meta；本断言固化该契约，防止未来 prompt 改动引入泄漏。
+    Covers the full fault roster -- the six FAULTS plus the phase-four
+    EXTRA_FAULTS (retrieval_detour / agent_deadlock), which the third-round
+    version of this test missed.
+
+    The trace_id contains the fault name (e.g. q-trajaudit--
+    info_withholding) but the rendered view contains neither trace_id nor
+    meta; this assertion pins down that contract, preventing future prompt
+    changes from introducing leaks.
     """
-    gt_tokens = (*FAULTS, "injected_fault", "mast_code", "ground truth")
-    for kind in FAULTS:
+    gt_tokens = (*ALL_FAULTS, "injected_fault", "mast_code", "ground truth")
+    for kind in ALL_FAULTS:
         b, ctx = _bundle("q-trajaudit", kind)
         fake = FakeLLMClient()
         ctx.llm = fake
         JudgeEvalAnalyzer().run_one(b, ctx)
         MastJudgeClassifier().run_one(b, ctx)
         AllAtOnceAttributor().run_one(b, ctx)
-        assert fake.calls, f"{kind}: 判官未被调用"
+        assert fake.calls, f"{kind}: the judges were not called"
         for call in fake.calls:
             blob = " ".join(
                 str(m.get("content", "")) for m in call["messages"]
             )
             for tok in gt_tokens:
-                assert tok not in blob, f"{kind}: prompt 泄漏 {tok!r}（tag={call['tag']}）"
+                assert tok not in blob, f"{kind}: prompt leaks {tok!r} (tag={call['tag']})"
+
+
+def test_fewshot_step_numbers_do_not_collide_with_gt_onsets():
+    """Anti-leak regression (fourth review round, 2026-08-27): every step
+    number cited in the built-in few-shot examples of judge_eval and
+    mast_judge must be fictional -- not equal to any sandbox GT onset step
+    (FAULTS + EXTRA_FAULTS, computed across all tasks) and not reproducing
+    a GT step-run like step_repetition's "3/5/7".
+
+    History: judge_eval's example cited "step 3"/"step 9", which are exactly
+    the onsets of malformed_tool_call and ungrounded_citation/
+    disobey_task_spec -- a judge that pattern-matches the demonstration
+    onto the trajectory gets the answer key for free. The third-round
+    check (test_audit_fixes.py) covered only mast_judge/all_at_once; this
+    pins judge_eval with the same criterion.
+    """
+    import re
+
+    from atap.analyze.judge_eval import _FEW_SHOT as JE_FEW_SHOT
+    from atap.classify.mast_judge import _FEW_SHOT as MAST_FEW_SHOT
+
+    onsets = {
+        ToySandbox().generate(task, kind).meta["injected_fault"]["step"]
+        for task in env.TASKS
+        for kind in ALL_FAULTS
+    }
+    assert onsets  # sanity: the sandbox roster actually produced onsets
+    for name, fs in (("judge_eval", JE_FEW_SHOT), ("mast_judge", MAST_FEW_SHOT)):
+        cited = {int(n) for n in re.findall(r"step\D*(\d+)", fs)}
+        assert cited, f"{name}: few-shot cites no step number (regex broken?)"
+        assert not (cited & onsets), (
+            f"{name}: few-shot cites GT onset step(s) {sorted(cited & onsets)}; "
+            "move the fictional step numbers off the onset set"
+        )
+        assert "3/5/7" not in fs  # GT search-call run of step_repetition
+
+
+def test_extra_modes_empty_definition_skipped_with_trace(tmp_path):
+    """A mode with an empty/whitespace definition must never reach the judge
+    prompt (a bare code+name line invites free-form guessing); the skip is
+    recorded in the artifact's skipped_extra_modes instead of being silent."""
+    import json
+
+    f = tmp_path / "modes.json"
+    f.write_text(
+        json.dumps({"modes": [
+            {"code": "NM-1", "name": "Blank mode", "definition": "   "},
+            {"code": "NM-2", "name": "Usable mode",
+             "definition": "repeats identical calls without progress"},
+        ]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    clf = MastJudgeClassifier(extra_modes_file=str(f))
+    assert sorted(clf.extra_modes) == ["NM-2"]
+    assert clf.skipped_extra_modes == [{"code": "NM-1", "reason": "empty definition"}]
+
+    b, ctx = _bundle("q-trajaudit", "step_repetition")
+    fake = FakeLLMClient(responses=[
+        '{"labels": [{"code": "NM-2", "reason": "repeats calls", "step": 2}]}'
+    ])
+    ctx.llm = fake
+    clf.run_one(b, ctx)
+    art = b.get("classify", "mast_judge")
+    assert [l["code"] for l in art["labels"]] == ["NM-2"]
+    assert art["skipped_extra_modes"] == [{"code": "NM-1", "reason": "empty definition"}]
+    blob = " ".join(str(m.get("content", "")) for m in fake.calls[0]["messages"])
+    assert "NM-2" in blob and "NM-1" not in blob  # empty definition never enters the prompt
+
+
+def test_taxonomy_definitions_align_with_paper_appendix_a():
+    """Pins the wording restored in the fourth review round: the definitions
+    below enter the judge prompt verbatim (mast_definitions_block), so drift
+    from the paper's Appendix A (e.g. toward the sandbox fault symptoms)
+    would effectively steer the judge toward the ground truth."""
+    d = {k: v["definition"] for k, v in MAST_MODES.items()}
+    # FM-2.6: the paper's consequence clause was accidentally dropped
+    assert "unexpected or undesired behaviors" in d["FM-2.6"]
+    # FM-1.1: the paper says "specified constraints", not "explicit"
+    assert "specified constraints" in d["FM-1.1"] and "explicit" not in d["FM-1.1"]
+    # FM-2.2: the paper's word is "unclear or incomplete data", not "ambiguous"
+    assert "unclear or incomplete data" in d["FM-2.2"]
+    # FM-2.3: the paper anchors to the "intended objective", not "established goal"
+    assert "intended objective" in d["FM-2.3"] and "established goal" not in d["FM-2.3"]
+    # FM-2.1: the paper's "Unexpected" is kept (via "Unexpectedly")
+    assert "Unexpectedly" in d["FM-2.1"]
+    # FM-3.1: the paper quantifies "all necessary information"
+    assert "before all necessary information" in d["FM-3.1"]
+    # FM-3.2: the paper lets "errors or inconsistencies" propagate undetected
+    assert "errors or inconsistencies" in d["FM-3.2"]

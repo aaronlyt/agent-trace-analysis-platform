@@ -1,0 +1,18 @@
+# DRIFT claim ledger audit (R3 + attribution) (offline, FakeLLM): differs from the v3 full stack only in representation/attribution algorithms, for atap compare
+run_name: offline-claim
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: fake
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+    - claim_ledger
+  attribute:
+    - claim_audit

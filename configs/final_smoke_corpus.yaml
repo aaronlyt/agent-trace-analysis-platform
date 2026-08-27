@@ -1,0 +1,39 @@
+# Pre-launch real-model test: 24 spectrum-corpus trajectories on the smoke stack (deepseek-v4-flash)
+# Differs from final_smoke.yaml only in the trajectory source: scale-out validation of the full smoke chain on a larger corpus
+run_name: final-smoke-corpus
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: openai
+  model: deepseek-v4-flash
+  temperature: 0.0
+  request_interval: 1.0
+  max_completion_tokens: 16384  # first attempt: one mast_judge reasoning chain burned the
+                                # whole 8192 budget -> empty content, repair retries also
+                                # empty (v3/v4 pass the same corpus/algorithm -> stochastic
+                                # thinking blow-up; 16384 verified accepted by the API)
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+  analyze:
+    - name: judge_eval
+      params:
+        only_failures: false
+  classify:
+    - mast_judge
+  attribute:
+    - all_at_once
+  recover:
+    - name: targeted_rerun
+      params:
+        max_rounds: 5

@@ -1,0 +1,24 @@
+# Real LLM claim ledger audit (nvidia/nemotron-3-ultra-550b-a55b:free,
+# ~18 calls on the demo corpus: ledger 7 + claim_audit 11 -- the second tier after the 26-call smoke test)
+run_name: realtest-nemotron-ultra-claim
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/demo/traces.jsonl
+
+llm:
+  type: openai
+  model: "nvidia/nemotron-3-ultra-550b-a55b:free"
+  temperature: 0.0
+  request_interval: 3.0
+  # The long records array needs a larger output budget (see the first-run truncation lesson in realtest_ox_claim)
+  max_completion_tokens: 8192
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+    - claim_ledger              # Claim 6-tuple extraction (1 call per trajectory)
+  attribute:
+    - claim_audit               # Support/trace audit + first erroneous commitment step

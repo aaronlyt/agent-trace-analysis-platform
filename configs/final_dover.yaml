@@ -1,0 +1,30 @@
+# Pre-launch real-model test, dover tier (deepseek-v4-flash): pipeline_dover.yaml with the llm block swapped
+# L3 do-then-verify recovery: all_at_once attribution + in-place message substitution checkpoint replay x3 + milestone differential four-way verdict
+run_name: final-dover
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: openai
+  model: deepseek-v4-flash
+  temperature: 0.0
+  request_interval: 1.0
+  max_completion_tokens: 8192
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+  attribute:
+    - all_at_once
+  recover:
+    - name: dover
+      params:
+        n_repeats: 3

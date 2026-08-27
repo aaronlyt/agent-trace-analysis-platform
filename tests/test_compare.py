@@ -1,4 +1,4 @@
-"""算法对比跑法（atap compare）与频谱语料生成测试。"""
+"""Algorithm comparison runner (atap compare) and spectrum corpus generation tests."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def _write_cfg(path, name, attributor, recover="targeted_rerun"):
 
 def test_generate_corpus_shape():
     traces = ToySandbox().generate_corpus(successes_per_task=2)
-    assert len(traces) == 3 * (2 + 6)  # 3 任务 ×（2 成功 + 6 故障）
+    assert len(traces) == 3 * (2 + 6)  # 3 tasks x (2 successes + 6 faults)
     per_task = {}
     for t in traces:
         task = t.meta["task_id"]
@@ -64,7 +64,7 @@ def test_run_compare_two_configs(tmp_path):
         assert r["n_failed"] == 18
         assert "llm_calls_by_tag" in r and r["llm_calls"] > 0
         assert len(r["per_fault"]) == 6
-    # 两个配置都恢复了全部 18 条（伪判官反馈闭环）
+    # both configs recovered all 18 (pseudo-judge feedback closed loop)
     assert rows["cmp-all-at-once"]["recovered"] == 18
     assert rows["cmp-binary"]["recovered"] == 18
     out_json = tmp_path / "cmp" / "comparison.json"
@@ -85,7 +85,7 @@ def test_run_compare_rejects_mismatched_sources(tmp_path):
         }),
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="同一轨迹集"):
+    with pytest.raises(ValueError, match="same trajectory set"):
         run_compare([a, str(tmp_path / "b.json")], tmp_path / "cmp")
 
 

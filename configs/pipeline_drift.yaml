@@ -1,0 +1,14 @@
+# Distribution drift detection (offline, zero LLM): consumes the drift corpus and emits alerts for three drift contrast families
+# Run `atap corpus --drift --out runs/drift/traces.jsonl` first
+run_name: drift-monitor
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/drift/traces.jsonl
+
+stages:
+  represent:
+    - canonical_events
+  analyze:
+    - drift_detect

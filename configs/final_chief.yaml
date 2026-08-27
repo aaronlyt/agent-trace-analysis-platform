@@ -1,0 +1,23 @@
+# Pre-launch real-model test, chief tier (deepseek-v4-flash): pipeline_chief.yaml with the llm block swapped
+# CHIEF hierarchical causal graph attribution (oracle synthesis → reverse-topology traversal → progressive causal filtering)
+run_name: final-chief
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: openai
+  model: deepseek-v4-flash
+  temperature: 0.0
+  request_interval: 1.0
+  max_completion_tokens: 8192
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+    - hcg
+  attribute:
+    - chief

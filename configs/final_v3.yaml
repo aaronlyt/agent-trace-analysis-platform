@@ -1,0 +1,46 @@
+# Pre-launch real-model test, v3 full stack (deepseek-v4-flash): pipeline_offline_v3.yaml with the llm block swapped
+# Phase-3 full stack: R5 signatures + loop predicate + L0 rule pack + L2 binary search + feedback injection + closed loop
+# Trajectory source is the spectrum corpus: run `atap corpus --out runs/corpus/traces.jsonl` first
+run_name: final-v3
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: openai
+  model: deepseek-v4-flash
+  temperature: 0.0
+  request_interval: 1.0
+  max_completion_tokens: 8192
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events              # R0: span tree → unified event stream
+    - ssf                           # R1: saliency folding (TrajAudit)
+    - action_signature              # R5: nine action classes + effect labels + anchor set/LCS (TraceProbe)
+  analyze:
+    - judge_eval
+    - name: loop_detect             # Loop detection predicate (TraceProbe Table II)
+      params:
+        # Paper froze 10 on SWE-Bench scale; 3 = toy-domain audit. Disclosure:
+        # normal/other-fault traces max out at 2 consecutive read actions, the
+        # injected step_repetition fault produces 3 identical searches, so any
+        # threshold in {3,4} separates the whole corpus — offline detection
+        # numbers are determined by this choice (3 == the fault's repetition
+        # count), not measured.
+        min_consecutive: 3
+  classify:
+    - mast_judge
+    - rule_pack                     # L0 free rule pack (AgentDebugX)
+  attribute:
+    - binary_search                 # L2 binary-search localization (Who&When, ⌈log₂n⌉ rounds)
+  recover:
+    - name: feedback_injection      # AgenTracer feedback-injection re-solving (3 rounds of full re-solving)
+      params:
+        max_rounds: 3

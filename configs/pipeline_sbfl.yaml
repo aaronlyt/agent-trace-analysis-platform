@@ -1,5 +1,5 @@
-# SBFL 频谱归因变体（FAMAS，跨轨迹聚合）：与 v3 全栈仅归因算法不同，供 compare 对比
-# 用法：atap compare --config configs/pipeline_offline_v3.yaml --config configs/pipeline_sbfl.yaml \
+# SBFL spectrum attribution variant (FAMAS, cross-trajectory aggregation): differs from the v3 full stack only in the attribution algorithm, for atap compare
+# Usage:atap compare --config configs/pipeline_offline_v3.yaml --config configs/pipeline_sbfl.yaml \
 #          --traces runs/corpus/traces.jsonl
 run_name: offline-sbfl
 seed: 7
@@ -25,13 +25,18 @@ stages:
     - judge_eval
     - name: loop_detect
       params:
+        # Paper froze 10 on SWE-Bench scale; 3 = toy-domain audit. Disclosure:
+        # normal/other-fault traces max out at 2 consecutive read actions, the
+        # injected step_repetition fault produces 3 identical searches, so any
+        # threshold in {3,4} separates the whole corpus — offline detection
+        # numbers are determined by this choice, not measured.
         min_consecutive: 3
   classify:
     - mast_judge
     - rule_pack
   attribute:
-    - name: sbfl                    # L0 频谱先验（run_corpus 跨轨迹聚合）
+    - name: sbfl                    # L0 spectrum prior (run_corpus cross-trajectory aggregation)
       params:
         lam: 0.9
         top_k: 5
-  # recover 不配置：频谱先验不作终判，不接恢复
+  # recover not configured: the spectrum prior is not a final verdict and is not wired to recovery

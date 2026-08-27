@@ -1,0 +1,27 @@
+# L3 do-then-verify recovery (DoVer 2512.06749, offline FakeLLM):
+# all_at_once attribution + in-place message substitution checkpoint replay x3 + milestone outcome differential + four-way verdict
+run_name: offline-dover
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: fake
+
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+  attribute:
+    - all_at_once
+  recover:
+    - name: dover
+      params:
+        n_repeats: 3

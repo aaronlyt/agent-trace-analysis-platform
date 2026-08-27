@@ -16,8 +16,23 @@ dev = ["pytest>=7"]
 [project.scripts]
 atap = "atap.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# src/ is the atap package (package-dir mapping, no src/atap nesting); subpackages
+# are listed explicitly — root-level content (tests/configs/docs/runs) is excluded
+# from the distribution
+[tool.setuptools]
+package-dir = {"atap" = "src"}
+packages = [
+    "atap",
+    "atap.core",
+    "atap.llm",
+    "atap.io",
+    "atap.sandbox",
+    "atap.represent",
+    "atap.analyze",
+    "atap.classify",
+    "atap.attribute",
+    "atap.recover",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"

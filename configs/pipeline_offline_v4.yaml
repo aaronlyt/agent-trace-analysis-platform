@@ -1,0 +1,40 @@
+# Phase-4 deterministic-layer full stack (offline, FakeLLM): R2 dependency graph + R4 hierarchy tree + RG/UG deterministic
+# attribution + distribution drift detection + residual vocabulary expansion (inducer)
+# Trajectory source is the spectrum corpus: run `atap corpus --out runs/corpus/traces.jsonl` first (qrels included)
+run_name: offline-v4-deterministic
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: fake
+
+stages:
+  represent:
+    - canonical_events              # R0: span tree → unified event stream
+    - ssf                           # R1: saliency folding (TrajAudit)
+    - action_signature              # R5: nine action classes + effect labels (TraceProbe)
+    - idg                           # R2: information dependency graph (GraphTracer idea, refs emitted directly)
+    - hierarchy_tree                # R4: hierarchy tree + stage index (CodeTracer)
+  analyze:
+    - judge_eval
+    - name: loop_detect
+      params:
+        # Paper froze 10 on SWE-Bench scale; 3 = toy-domain audit. Disclosure:
+        # normal/other-fault traces max out at 2 consecutive read actions, the
+        # injected step_repetition fault produces 3 identical searches, so any
+        # threshold in {3,4} separates the whole corpus — offline detection
+        # numbers are determined by this choice, not measured.
+        min_consecutive: 3
+    - drift_detect                 # Distribution drift (2511.19933 three drift classes, PSI as engineering choice)
+  classify:
+    - rule_pack                    # L0 free rule pack (AgentDebugX)
+    - name: mast_judge             # MAST labeling + novel residual channel
+      params:
+        allow_novel: true
+    - inducer                      # Residual clustering → vocabulary proposals (human gate, never auto-applied)
+  attribute:
+    - rg_ug                        # L0 deterministic attribution (2608.01913 qrels set operations)
+  # recover not configured: the deterministic layer targets representation/attribution/monitoring; see the v3 and dover configs for the recovery closed loop

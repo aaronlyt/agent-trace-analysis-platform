@@ -1,7 +1,9 @@
-"""阶段二验收：离线全链路 e2e（FakeLLM 确定性判官）。
+"""Stage two acceptance: offline full-chain e2e (FakeLLM deterministic judge).
 
-对六种注入故障逐一断言：归因 step/agent/MAST 与 ground truth 对齐、
-定向重跑恢复成功、闭环验证改善——完整复现文献流程的可复现缩影。
+For each of the six injected faults, assert: attribution step/agent/MAST
+aligned with the ground truth, targeted rerun recovers successfully,
+closed-loop verification improves -- a reproducible miniature of the
+literature pipeline.
 """
 
 from __future__ import annotations
@@ -60,9 +62,9 @@ def test_attribution_matches_ground_truth(e2e, kind):
     b = next(x for x in bundles if x.trajectory.meta.get("injected_fault", {}).get("kind") == kind)
     gt = b.trajectory.meta["injected_fault"]
     hyps = b.hypotheses()
-    assert hyps, f"{kind}: 无归因输出"
+    assert hyps, f"{kind}: no attribution output"
     top = max(hyps, key=lambda h: h.confidence)
-    assert top.step == gt["step"], f"{kind}: 归因 step {top.step} != gt {gt['step']}"
+    assert top.step == gt["step"], f"{kind}: attributed step {top.step} != gt {gt['step']}"
     assert top.agent == gt["agent"]
     assert top.root_cause_code == gt["mast_code"]
 
@@ -94,9 +96,9 @@ def test_success_traces_scored_high_not_attributed(e2e):
 
 def test_closed_loop_second_round_all_pass(e2e):
     _, reports, _ = e2e
-    assert len(reports) == 2  # 初始轮 + 闭环验证轮
+    assert len(reports) == 2  # initial round + closed-loop verification round
     assert reports[0].n_failures == 6
-    assert reports[1].n_failures == 0  # 重跑轨迹全部通过全流程验证
+    assert reports[1].n_failures == 0  # all rerun trajectories pass the full-pipeline verification
     assert reports[1].n_attributed == 0
 
 
@@ -105,7 +107,7 @@ def test_artifacts_persisted(e2e):
     arts = out / "artifacts"
     assert (arts / "report.json").exists()
     files = list(arts.rglob("*.json"))
-    # 每条轨迹至少有 5 个阶段产物 × 7 条 + report
+    # at least 5 stage artifacts per trajectory x 7 traces + report
     assert len(files) >= 7 * 5 + 1
     report = json.loads((arts / "report.json").read_text(encoding="utf-8"))
     assert report["n_reruns"] == 6 and report["n_rerun_success"] == 6

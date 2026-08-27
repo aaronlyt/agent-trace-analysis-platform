@@ -1,4 +1,4 @@
-"""schema / registry / config 单元测试（阶段一验收的一部分）。"""
+"""schema / registry / config unit tests (part of stage one acceptance)."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def test_registry_conflict():
         def run_one(self, bundle, ctx): ...
 
     try:
-        with pytest.raises(RegistryError, match="注册冲突"):
+        with pytest.raises(RegistryError, match="registry conflict"):
             @register
             class _B(Representer):
                 stage = "represent"
@@ -82,7 +82,7 @@ def test_registry_conflict():
 def test_registry_bad_stage():
     from atap.represent.base import Representer
 
-    with pytest.raises(RegistryError, match="不合法"):
+    with pytest.raises(RegistryError, match="is invalid"):
         @register
         class _Bad(Representer):
             stage = "nonexistent"
@@ -92,7 +92,7 @@ def test_registry_bad_stage():
 
 
 def test_create_unknown_lists_available():
-    with pytest.raises(RegistryError, match="可用算法"):
+    with pytest.raises(RegistryError, match="available algorithms"):
         create("analyze", "no_such_algo")
 
 
@@ -109,11 +109,11 @@ def test_config_from_dict_minimal():
 
 
 def test_config_unknown_stage_and_keys():
-    with pytest.raises(ConfigError, match="未知 stage"):
+    with pytest.raises(ConfigError, match="unknown stages"):
         config_from_dict({"stages": {"nope": ["x"]}})
-    with pytest.raises(ConfigError, match="未知顶层配置键"):
+    with pytest.raises(ConfigError, match="unknown top-level config keys"):
         config_from_dict({"stages": {"analyze": ["x"]}, "wrong_key": 1})
-    with pytest.raises(ConfigError, match="不能为空"):
+    with pytest.raises(ConfigError, match="must not be empty"):
         config_from_dict({"stages": {}})
 
 

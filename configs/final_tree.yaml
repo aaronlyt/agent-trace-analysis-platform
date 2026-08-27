@@ -1,0 +1,22 @@
+# Pre-launch real-model test, tree tier (deepseek-v4-flash): pipeline_tree.yaml with the llm block swapped
+# CodeTracer tree-index diagnosis (R4 hierarchy tree + tree.md tree-level localization → stage-interval drill-down)
+run_name: final-tree
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: openai
+  model: deepseek-v4-flash
+  temperature: 0.0
+  request_interval: 1.0
+  max_completion_tokens: 8192
+
+stages:
+  represent:
+    - canonical_events
+    - hierarchy_tree
+  attribute:
+    - tree_diagnosis

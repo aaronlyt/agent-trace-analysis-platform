@@ -1,0 +1,24 @@
+# Pre-launch real-model test, claim tier (deepseek-v4-flash): pipeline_claim.yaml with the llm block swapped
+# DRIFT claim ledger audit (R3 representation + claim_audit attribution)
+# claim_audit_support carries a long rationale per claim; 4096 truncates the JSON, only 8192 fits the full records
+run_name: final-claim
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: openai
+  model: deepseek-v4-flash
+  temperature: 0.0
+  request_interval: 1.0
+  max_completion_tokens: 8192
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+    - claim_ledger
+  attribute:
+    - claim_audit

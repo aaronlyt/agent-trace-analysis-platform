@@ -1,13 +1,17 @@
-"""架构不变量测试 —— 用 import 图强制"低依赖、单向流动"。
+"""Architecture invariant tests -- enforce "low coupling, one-way flow"
+via the import graph.
 
-规则（对应 README 架构约定）：
-1. core/** 只能 import atap.core（+ stdlib/pydantic/延迟 yaml）；
-2. 算法模块（stage 包内除 base/__init__/taxonomy 外的文件）不得 import：
-   其它 stage 包（唯一例外：classify.taxonomy 共享词表）、atap.sandbox、
-   atap.runtime、atap.cli、atap.demo —— 算法间只通过 bundle 产物解耦；
-3. llm/**、io/** 不得 import stage 包 / sandbox / runtime；
-4. sandbox/** 只能 import atap.core；
-5. 注册表内所有类的 stage 属性必须与其所在包一致。
+Rules (matching the README architecture conventions):
+1. core/** may only import atap.core (+ stdlib/pydantic/lazy yaml);
+2. algorithm modules (files in stage packages other than base/__init__/
+   taxonomy) must not import: other stage packages (sole exception:
+   classify.taxonomy as the shared vocabulary), atap.sandbox, atap.runtime,
+   atap.cli, atap.demo -- algorithms decouple only through bundle
+   artifacts;
+3. llm/**, io/** must not import stage packages / sandbox / runtime;
+4. sandbox/** may only import atap.core;
+5. every class in the registry must have a stage attribute matching its
+   package.
 """
 
 from __future__ import annotations
@@ -17,12 +21,13 @@ from pathlib import Path
 
 import pytest
 
-import atap  # noqa: F401  注册引导
+import atap  # noqa: F401  registration bootstrap
 from atap.core.registry import _REGISTRY
 
 SRC = Path(atap.__file__).parent
 STAGE_PKGS = ("represent", "analyze", "classify", "attribute", "recover")
-# 算法模块可共享的"词表"文件（无算法注册、纯定义）
+# "vocabulary" files shareable by algorithm modules (no algorithm
+# registration, pure definitions)
 SHARED_VOCAB = {"classify/taxonomy.py"}
 
 
@@ -49,20 +54,20 @@ def rel(path: Path) -> str:
     return str(path.relative_to(SRC))
 
 
-# ------------------------------------------------------------------ 规则 1 --
+# ------------------------------------------------------------------ rule 1 --
 
 def test_core_is_self_contained():
-    # 允许依赖纯接口模块（llm/io 的 base 只含 Protocol，无实现）
+    # pure-interface modules are allowed (llm/io base hold only Protocols, no implementations)
     allowed = ("atap.core", "atap.llm.base", "atap.io.base")
     violations = []
     for p in all_py("core/*.py"):
         for m in sorted(atap_imports(imports_of(p))):
             if m != "atap" and not m.startswith(allowed):
                 violations.append(f"{rel(p)} imports {m}")
-    assert not violations, f"core 出现越界依赖：{violations}"
+    assert not violations, f"core has out-of-bounds dependencies: {violations}"
 
 
-# ------------------------------------------------------------------ 规则 2 --
+# ------------------------------------------------------------------ rule 2 --
 
 def test_algorithm_modules_decoupled():
     violations = []
@@ -78,13 +83,13 @@ def test_algorithm_modules_decoupled():
                 if other in STAGE_PKGS and not (
                     other == pkg or m == "atap.classify.taxonomy"
                 ):
-                    violations.append(f"{r} imports {m}（跨算法依赖）")
+                    violations.append(f"{r} imports {m} (cross-algorithm dependency)")
                 if other in ("sandbox", "runtime", "cli", "demo"):
-                    violations.append(f"{r} imports {m}（算法不得依赖装配/沙盒）")
-    assert not violations, f"算法间耦合违规：{violations}"
+                    violations.append(f"{r} imports {m} (algorithms must not depend on assembly/sandbox)")
+    assert not violations, f"cross-algorithm coupling violations: {violations}"
 
 
-# ------------------------------------------------------------------ 规则 3 --
+# ------------------------------------------------------------------ rule 3 --
 
 def test_llm_io_not_depend_on_stages():
     violations = []
@@ -96,10 +101,10 @@ def test_llm_io_not_depend_on_stages():
                 other = m.split(".")[1]
                 if other in (*STAGE_PKGS, "sandbox", "runtime", "cli", "demo"):
                     violations.append(f"{rel(p)} imports {m}")
-    assert not violations, f"llm/io 越界依赖：{violations}"
+    assert not violations, f"llm/io out-of-bounds dependencies: {violations}"
 
 
-# ------------------------------------------------------------------ 规则 4 --
+# ------------------------------------------------------------------ rule 4 --
 
 def test_sandbox_only_depends_on_core():
     violations = []
@@ -109,21 +114,23 @@ def test_sandbox_only_depends_on_core():
                 continue
             if not (m.startswith("atap.core") or m.startswith("atap.sandbox")):
                 violations.append(f"{rel(p)} imports {m}")
-    assert not violations, f"sandbox 越界依赖：{violations}"
+    assert not violations, f"sandbox out-of-bounds dependencies: {violations}"
 
 
-# ------------------------------------------------------------------ 规则 5 --
+# ------------------------------------------------------------------ rule 5 --
 
 def test_registered_class_stage_matches_package():
     mismatches = []
     for (stage, name), cls in _REGISTRY.items():
         mod = cls.__module__
         if not mod.startswith("atap."):
-            continue  # 测试内注册的 Dummy 不受包位置约束
+            continue  # Dummies registered inside tests are exempt from package-position constraints
         pkg = mod.split(".")[1]
         if pkg in STAGE_PKGS and pkg != stage:
-            mismatches.append(f"{mod}:{cls.__name__} 注册为 stage={stage}，但位于 {pkg} 包")
-    assert not mismatches, f"stage/包不一致：{mismatches}"
+            mismatches.append(
+                f"{mod}:{cls.__name__} registered as stage={stage}, but located in the {pkg} package"
+            )
+    assert not mismatches, f"stage/package mismatch: {mismatches}"
 
 
 def test_every_registered_class_is_instantiable_via_factory():

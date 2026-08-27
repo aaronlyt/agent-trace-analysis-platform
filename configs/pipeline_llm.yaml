@@ -1,6 +1,6 @@
-# 真实 LLM 配置（OpenAI 兼容接口，示例为 OpenRouter）
-# 需要环境变量：OPENAI_API_KEY（必需）、OPENAI_BASE_URL（OpenRouter: https://openrouter.ai/api/v1）
-# 依赖：pip install 'atap[llm]'
+# Real LLM configuration (OpenAI-compatible API, example uses OpenRouter)
+# Requires environment variables: OPENAI_API_KEY (required), OPENAI_BASE_URL (OpenRouter: https://openrouter.ai/api/v1)
+# Dependency: pip install 'atap[llm]'
 run_name: llm-full-pipeline
 seed: 7
 
@@ -10,8 +10,8 @@ source:
 
 llm:
   type: openai
-  model: stealth/ox-alpha          # OpenRouter 模型名
-  temperature: 0.0                  # 判官类任务取 0 保证可复现
+  model: stealth/ox-alpha          # OpenRouter model name
+  temperature: 0.0                  # 0 for judge-style tasks to guarantee reproducibility
 
 sandbox:
   type: toy
@@ -25,7 +25,7 @@ stages:
   analyze:
     - name: judge_eval
       params:
-        only_failures: false      # 成功轨迹也评测（分数基线）
+        only_failures: false      # Successful trajectories are also evaluated (score baseline)
   classify:
     - mast_judge
   attribute:

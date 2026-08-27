@@ -1,0 +1,17 @@
+# CodeTracer tree-index diagnosis (R4 + attribution) (offline, FakeLLM): differs from the v3 full stack only in representation/attribution algorithms, for atap compare
+run_name: offline-tree
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/corpus/traces.jsonl
+
+llm:
+  type: fake
+
+stages:
+  represent:
+    - canonical_events
+    - hierarchy_tree
+  attribute:
+    - tree_diagnosis

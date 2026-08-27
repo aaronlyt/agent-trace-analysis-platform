@@ -1,0 +1,22 @@
+# Real LLM CHIEF attribution (OpenRouter stealth/ox-alpha, 18 calls on the demo corpus:
+# oracle/eval/localize 6 each -- the second tier after the 26-call smoke test, 44 calls in total)
+run_name: realtest-ox-chief
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/demo/traces.jsonl
+
+llm:
+  type: openai
+  model: stealth/ox-alpha
+  temperature: 0.0
+  request_interval: 3.0
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+    - hcg                       # Hierarchical causal graph (deterministic, zero LLM)
+  attribute:
+    - chief                     # Oracle traversal + progressive filtering

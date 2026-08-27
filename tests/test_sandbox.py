@@ -1,4 +1,4 @@
-"""沙盒单元测试：环境工具、七种 rollout、定向重放语义。"""
+"""Sandbox unit tests: environment tools, the seven rollouts, targeted replay semantics."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def test_verify_branches():
 
 
 def _prepared(trace_id_task: str, fault: str | None):
-    """生成轨迹并跑 R0 拍平（重放需要事件流）。"""
+    """Generate a trajectory and run the R0 flattening (replay needs the event stream)."""
     sb = ToySandbox()
     t = sb.generate(trace_id_task, fault)
     bundle = TrajectoryBundle(t)
@@ -59,7 +59,7 @@ def test_success_rollout():
     sb, t = _prepared("q-trajaudit", None)
     assert t.outcome.success
     assert "injected_fault" not in t.meta
-    # 引用边已拍平：read 结果引用 read 调用
+    # citation edges flattened: read results reference the read call
     reads = [e for e in t.events if e.kind == "TOOL_RESULT" and e.action == "read_doc"]
     assert reads and reads[0].refs == [t.events[reads[0].index - 1].id]
 
@@ -74,19 +74,19 @@ def test_repetition_bursts_budget():
 def test_rerun_targeted_vs_vague_feedback():
     sb, t = _prepared("q-trajaudit", "info_withholding")
     step = t.meta["injected_fault"]["step"]
-    targeted = sb.rerun_from(t, step, "避免 info_withholding：如实报告检索到的文档。")
-    vague = sb.rerun_from(t, step, "请更仔细地检查轨迹并重试。")
+    targeted = sb.rerun_from(t, step, "Avoid info_withholding: faithfully report the retrieved documents.")
+    vague = sb.rerun_from(t, step, "Please inspect the trajectory more carefully and retry.")
     assert targeted.outcome.success and targeted.meta["fault_removed"] is True
     assert vague.outcome.success is False and vague.meta["fault_removed"] is False
     assert targeted.meta["rerun_of"] == t.trace_id
-    # 前缀保留：重跑轨迹保留了 [0, step) 事件
+    # prefix preserved: the rerun trajectory keeps the [0, step) events
     assert [e.id for e in targeted.events[:step]] == [e.id for e in t.events[:step]]
-    # 重跑后 index 连续且唯一
+    # after the rerun, indexes are contiguous and unique
     idx = [e.index for e in targeted.events]
     assert idx == list(range(len(idx)))
 
 
 def test_rerun_success_trace_noop_prefix():
     sb, t = _prepared("q-trajaudit", None)
-    rr = sb.rerun_from(t, 0, "任意反馈")
-    assert rr.outcome.success  # 无故障重放仍成功
+    rr = sb.rerun_from(t, 0, "any feedback")
+    assert rr.outcome.success  # replaying a fault-free trace still succeeds

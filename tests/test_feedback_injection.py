@@ -1,4 +1,5 @@
-"""反馈注入再求解（AgenTracer 2509.03312）与沙盒 resolve 测试。"""
+"""Feedback-injection re-solving (AgenTracer 2509.03312) and sandbox resolve
+tests."""
 
 from __future__ import annotations
 
@@ -16,19 +17,19 @@ from atap.sandbox.faults import FAULTS
 def _bundle(task="q-trajaudit", fault=None, llm=None):
     b = TrajectoryBundle(ToySandbox().generate(task, fault))
     ctx = RunContext(llm=llm or FakeLLMClient())
-    ctx.env = ToySandbox()   # 无 LLM：反馈消费走关键词路径（离线确定性）
+    ctx.env = ToySandbox()   # no LLM: feedback consumption takes the keyword path (offline, deterministic)
     create("represent", "canonical_events").run_one(b, ctx)
     create("represent", "ssf").run_one(b, ctx)
     create("attribute", "all_at_once").run_one(b, ctx)
     return b, ctx
 
 
-# ------------------------------------------------------------- 沙盒 --
+# ------------------------------------------------------------- sandbox --
 
 def test_sandbox_resolve_keyword_feedback_removes_fault():
     sb = ToySandbox()
     t = sb.generate("q-trajaudit", "step_repetition")
-    ok = sb.resolve(t, "避免 step_repetition：不要重复相同检索。")
+    ok = sb.resolve(t, "Avoid step_repetition: do not repeat the same search.")
     assert ok.outcome.success and ok.meta["fault_removed"] is True
     assert ok.meta["rerun_of"] == t.trace_id
     assert "injected_fault" not in ok.meta
@@ -37,21 +38,26 @@ def test_sandbox_resolve_keyword_feedback_removes_fault():
 def test_sandbox_resolve_unrelated_feedback_keeps_fault():
     sb = ToySandbox()
     t = sb.generate("q-trajaudit", "step_repetition")
-    bad = sb.resolve(t, "请换一个查询词再检索。")   # 未点名故障类型
+    bad = sb.resolve(t, "Please search again with a different query.")   # does not name the fault type
     assert not bad.outcome.success and bad.meta["fault_removed"] is False
 
 
 def test_sandbox_resolve_llm_semantic_fallback():
-    """关键词未命中时，注入的 LLM 判 yes/no（伪判官按故障词模拟）。"""
+    """On a keyword miss, the injected LLM judges yes/no (the pseudo-judge
+    simulates via the fault-spec words)."""
     llm = FakeLLMClient()
     sb = ToySandbox(llm=llm)
     t = sb.generate("q-trajaudit", "step_repetition")
-    # 自由文本不含故障类型词 → 关键词不命中 → 交 LLM（伪判官读消息内的
-    # 故障规格与反馈文本，看到反馈描述了"重复检索"语义即 yes）
-    feedback = "上一轮无进展地重复了相同的检索调用直至预算耗尽；本轮应直接使用已有检索结果继续推进。"
+    # the free text contains no fault-type word -> no keyword hit -> handed
+    # to the LLM (the pseudo-judge reads the fault spec and the feedback
+    # text inside the message; seeing that the feedback describes the
+    # "repeated search" semantics, it answers yes)
+    feedback = ("Last round repeated the same search call with no progress "
+                "until the budget was exhausted; this round should use the "
+                "existing results and move forward directly.")
     ok = sb.resolve(t, feedback)
     assert llm.calls and llm.calls[-1]["tag"] == "feedback_match"
-    assert ok.outcome.success  # 伪判官从反馈里识别出故障语义
+    assert ok.outcome.success  # the pseudo-judge recognized the fault semantics from the feedback
 
 
 def test_runtime_injects_llm_into_sandbox():
@@ -67,7 +73,7 @@ def test_runtime_injects_llm_into_sandbox():
     assert ctx.env._llm is ctx.llm
 
 
-# ------------------------------------------------------- 恢复算法 --
+# ------------------------------------------------------- recovery algorithm --
 
 @pytest.mark.parametrize("kind", sorted(FAULTS))
 def test_feedback_injection_recovers_all_faults(kind):
@@ -76,10 +82,30 @@ def test_feedback_injection_recovers_all_faults(kind):
     art = b.get("recover", "feedback_injection")
     assert art["recovered"] is True, f"{kind}: {art['attempts']}"
     assert art["mode"] == "full_reresolve"
-    assert art["rounds"] <= 3                      # AgenTracer：3 轮
+    assert art["rounds"] <= 3                      # AgenTracer: 3 rounds
     assert len(b.reruns) == art["rounds"]
     assert all(r.meta.get("resolve_mode") == "full_reresolve" for r in b.reruns)
-    assert art["feedback_rounds"]                  # 反思反馈留痕
+    assert art["feedback_rounds"]                  # reflection feedback recorded
+
+
+@pytest.mark.parametrize("kind", sorted(FAULTS))
+def test_first_round_recovery_stops_loop_without_reflection(kind):
+    """Fourth audit round (2026-08-27): rounds<=3 above also passes when the
+    loop runs to exhaustion -- success must *stop* the loop. With the default
+    attribution pipeline the pseudo-judge's fix names the fault type, so the
+    round-1 keyword path already removes the fault: rounds==1, exactly one
+    re-solve, and the reflect call (which regenerates next-round feedback)
+    never fires (FakeLLM.calls records every LLM call)."""
+    b, ctx = _bundle("q-trajaudit", kind)
+    fake = ctx.llm
+    FeedbackInjectionRecoverer(max_rounds=3).run_one(b, ctx)
+    art = b.get("recover", "feedback_injection")
+    assert art["recovered"] is True, f"{kind}: {art['attempts']}"
+    assert art["rounds"] == 1
+    assert len(b.reruns) == 1
+    reflect_calls = [c for c in fake.calls if c["tag"] == "feedback_reflection"]
+    assert reflect_calls == []   # success stops the loop: zero reflection calls
+    assert len(art["feedback_rounds"]) == 1   # only the seeded round-1 feedback exists
 
 
 def test_no_hypothesis_skips_explicitly():
@@ -99,25 +125,33 @@ def test_no_env_degrades():
     assert art["status"] == "no_replay_environment"
 
 
-def test_reflection_prompt_no_gt_leak():
-    """弱反馈（无故障关键词）→ 第 1 轮失败 → 触发反思调用；反思 prompt
-    不得含 ground truth 键/故障类型词。"""
+@pytest.mark.parametrize("kind", sorted(FAULTS))
+def test_reflection_prompt_no_gt_leak(kind):
+    """Weak feedback (no fault keywords) -> round 1 fails -> the reflection
+    call fires; the reflection prompt must contain no ground-truth keys /
+    fault-type words. Parametrized over all six standard faults (fourth audit
+    round 2026-08-27: it previously covered info_withholding only)."""
     gt_tokens = (*FAULTS, "injected_fault", "mast_code", "ground truth")
-    b, ctx = _bundle("q-trajaudit", "info_withholding")
+    b, ctx = _bundle("q-trajaudit", kind)
     fake = ctx.llm
-    # 改写 top 假设的 fix 为不含关键词的弱反馈，强制走失败→反思→再解路径
-    b.get("attribute", "all_at_once")["hypotheses"][0]["fix_suggestion"] = (
-        "请更仔细地检查轨迹后再提交。"
-    )
+    # rewrite the top hypothesis into a weak feedback without keywords,
+    # forcing the fail -> reflect -> re-solve path. Both fields must be
+    # neutralized: the round-1 feedback is built from root_cause as well
+    # (e.g. the pseudo-judge's premature_termination reason literally
+    # contains the phrase "premature termination", which would hit the
+    # keyword path and recover in round 1 without ever reflecting)
+    hyp = b.get("attribute", "all_at_once")["hypotheses"][0]
+    hyp["root_cause"] = "The decisive error was not corrected."
+    hyp["fix_suggestion"] = "Please examine the trajectory more carefully before submitting."
     FeedbackInjectionRecoverer(max_rounds=2).run_one(b, ctx)
     reflect_calls = [c for c in fake.calls if c["tag"] == "feedback_reflection"]
-    assert reflect_calls, "弱反馈未触发反思调用"
+    assert reflect_calls, "weak feedback did not trigger the reflection call"
     for call in reflect_calls:
         blob = " ".join(str(m.get("content", "")) for m in call["messages"])
         for tok in gt_tokens:
-            assert tok not in blob, f"反思 prompt 泄漏 {tok!r}"
+            assert tok not in blob, f"reflection prompt leaks {tok!r}"
     art = b.get("recover", "feedback_injection")
-    assert art["recovered"] is True  # 第 2 轮反思反馈（含症状修正）后恢复
+    assert art["recovered"] is True  # recovered after the round-2 reflection feedback (with symptom correction)
 
 
 def test_closed_loop_with_feedback_injection(tmp_path):
@@ -143,7 +177,7 @@ def test_closed_loop_with_feedback_injection(tmp_path):
         },
     })
     bundles, reports = run_config(cfg, tmp_path / "out")
-    assert reports[-1].n_failures == 0  # 闭环验证轮全部通过
+    assert reports[-1].n_failures == 0  # all closed-loop verification rounds pass
     for b in bundles:
         loop = b.get("recover", "closed_loop")
         assert loop["verified_improved"] is True

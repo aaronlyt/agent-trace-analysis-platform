@@ -1,4 +1,4 @@
-"""L0 免费规则包（AgentDebugX 2607.18754）测试。"""
+"""L0 free rule pack (AgentDebugX 2607.18754) tests."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def test_no_progress_rule_consumes_loop_detect():
     b, _ = _bundle("q-trajaudit", "step_repetition")
     art = _findings(b)
     f = next(f for f in art["findings"] if f["rule"] == "no_progress_loop")
-    assert f["step"] == 5  # loop_detect 的 repetition_onset
+    assert f["step"] == 5  # loop_detect's repetition_onset
     assert f["mast_code"] == "FM-1.3"
 
 
@@ -49,11 +49,64 @@ def test_no_progress_fallback_on_r5_only():
     assert any(f["rule"] == "no_progress_loop" for f in art["findings"])
 
 
+def test_no_progress_reread_surface_not_dropped_when_artifact_present():
+    """P2 regression (2026-08-27 re-review): the loop artifact exists but
+    contains only a re_read_churn hit (a FILE_READ loop symptom; the paper's
+    default min_consecutive=10 keeps search_loop silent on a 3-read run).
+    The rule used to return empty -- no finding, no R5 fallback, no note --
+    exactly disabling the fallback's FILE_READ coverage when the artifact
+    existed. Now the re-read surface still goes through the R5 fallback and
+    the consumption boundary is observable in notes."""
+    from atap.core.schema import (
+        TASK_END,
+        TASK_START,
+        TOOL_CALL,
+        TOOL_RESULT,
+        Outcome,
+        TraceEvent,
+        Trajectory,
+    )
+
+    events = [TraceEvent(id="e000", ts=0, kind=TASK_START, agent="env", index=0)]
+    idx = 1
+    for _ in range(3):
+        events.append(TraceEvent(
+            id=f"e{idx:03d}", ts=float(idx), kind=TOOL_CALL, agent="searcher",
+            action="read_doc", payload={"doc_id": "d1"}, index=idx))
+        idx += 1
+        events.append(TraceEvent(
+            id=f"e{idx:03d}", ts=float(idx), kind=TOOL_RESULT, agent="env",
+            action="read_doc", refs=[events[-1].id], payload={"content": "doc"},
+            index=idx))
+        idx += 1
+    events.append(TraceEvent(
+        id=f"e{idx:03d}", ts=float(idx), kind=TASK_END, agent="env", index=idx))
+    t = Trajectory(trace_id="syn-reread", task="t", events=events,
+                   outcome=Outcome(success=False))
+    b = TrajectoryBundle(t)
+    ctx = RunContext()
+    create("represent", "canonical_events").run_one(b, ctx)
+    create("represent", "action_signature").run_one(b, ctx)
+    create("analyze", "loop_detect").run_one(b, ctx)   # paper-default thresholds
+    # precondition: the artifact exists and holds only re_read_churn --
+    # a consumed-predicate (search_loop/redundant_search) hit must NOT exist
+    assert {d["predicate"] for d in b.get("analyze", "loop_detect")["detected"]} \
+        == {"re_read_churn"}
+
+    art = _findings(b)
+    npl = [f for f in art["findings"] if f["rule"] == "no_progress_loop"]
+    assert npl, "re-read loop silently dropped: artifact present, no finding"
+    assert npl[0]["step"] == 1 and npl[0]["agent"] == "searcher"
+    assert any("R5 signature self-check fallback" in e for e in npl[0]["evidence"])
+    # observable consumption trace even when nothing is consumed
+    assert art["notes"] and "re-read surface" in art["notes"][0]
+
+
 def test_premature_success_rule_targets_decision_step():
     b, _ = _bundle("q-trajaudit", "premature_termination")
     art = _findings(b)
     f = next(f for f in art["findings"] if f["rule"] == "premature_success_claim")
-    assert f["step"] == 1 and f["agent"] == "planner"  # Eq.5：规划步而非 submit
+    assert f["step"] == 1 and f["agent"] == "planner"  # Eq.5: the planning step, not the submit
 
 
 def test_invalid_output_rule_on_verifier_rejection():
@@ -77,8 +130,10 @@ def test_fusion_labels_filled():
 
 
 def test_all_faults_get_at_least_one_rule_or_none():
-    """六故障全跑：靶故障各有命中；其余（信息隐瞒/无据引用）允许空——
-    L0 规则包只覆盖机械可验证失败，其余归 L1 判官。"""
+    """Run all six faults: the targeted faults each get a hit; the rest
+    (information withholding / ungrounded citation) may be empty -- the L0
+    rule pack only covers mechanically verifiable failures, the rest goes
+    to the L1 judge."""
     targets = {
         "malformed_tool_call": "malformed_tool_call",
         "step_repetition": "no_progress_loop",
@@ -88,4 +143,4 @@ def test_all_faults_get_at_least_one_rule_or_none():
     for kind, rule in targets.items():
         b, _ = _bundle("q-trajaudit", kind)
         art = _findings(b)
-        assert any(f["rule"] == rule for f in art["findings"]), f"{kind} 未命中 {rule}"
+        assert any(f["rule"] == rule for f in art["findings"]), f"{kind} did not hit {rule}"

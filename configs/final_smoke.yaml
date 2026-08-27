@@ -1,0 +1,36 @@
+# Pre-launch real-model test, smoke tier (7 demo trajectories, deepseek-v4-flash)
+# API key comes from environment variables: OPENAI_API_KEY (sk-...), OPENAI_BASE_URL=https://api.deepseek.com
+run_name: final-smoke
+seed: 7
+
+source:
+  type: jsonl
+  path: runs/demo/traces.jsonl
+
+llm:
+  type: openai
+  model: deepseek-v4-flash
+  temperature: 0.0
+  request_interval: 1.0
+  max_completion_tokens: 8192    # Reasoning-style output: with 4096, reasoning_content exhausts the budget and leaves content empty (lesson from real runs)
+sandbox:
+  type: toy
+
+closed_loop: true
+
+stages:
+  represent:
+    - canonical_events
+    - ssf
+  analyze:
+    - name: judge_eval
+      params:
+        only_failures: false   # Successful trajectories are also evaluated (score baseline)
+  classify:
+    - mast_judge
+  attribute:
+    - all_at_once
+  recover:
+    - name: targeted_rerun
+      params:
+        max_rounds: 5

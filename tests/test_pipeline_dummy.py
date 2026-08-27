@@ -1,15 +1,16 @@
-"""阶段一验收：Dummy 算法端到端 —— 读 JSONL → 五阶段编排 → 产物落盘。
+"""Stage one acceptance: Dummy algorithms end to end -- read JSONL -> five-stage orchestration -> artifacts persisted.
 
-验证可插拔机制本身：测试内注册 5 个 Dummy（每流程一个）+ 1 个跨轨迹
-Dummy（run_corpus 聚合作用域），YAML 配置组合，跑通全流程并校验产物
-落盘与执行顺序。
+Validates the pluggable mechanism itself: register 5 Dummies inside the test
+(one per stage) + 1 cross-trajectory Dummy (run_corpus aggregation scope),
+compose them via YAML config, run the full pipeline and verify artifact
+persistence and execution order.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import atap  # noqa: F401  注册引导
+import atap  # noqa: F401  import bootstraps registration
 from atap.core.base import STAGE_ORDER, StageAlgorithm
 from atap.core.registry import register
 from atap.io.jsonl_store import JSONLArtifactStore
@@ -22,7 +23,7 @@ _SEQ = {"n": 0}
 
 def _mk(stage_name: str):
     @register
-    class _Dummy(StageAlgorithm):  # 故意直接继承基类：证明任何 stage 可插拔
+    class _Dummy(StageAlgorithm):  # deliberately inherits the base directly: proves any stage is pluggable
         stage = stage_name
         name = f"dummy_{stage_name}"
         corpus_calls = 0
@@ -57,22 +58,22 @@ def test_dummy_pipeline_e2e(tmp_path):
     out = tmp_path / "out"
     bundles, reports = run_config(cfg, out)
 
-    # 两条轨迹都被处理
+    # both trajectories were processed
     assert len(bundles) == 2
     assert reports[-1].n_traces == 2
     assert reports[-1].n_failures == 1
-    assert reports[-1].stage_log, "编排日志不应为空"
+    assert reports[-1].stage_log, "orchestration log should not be empty"
 
-    # 每条 bundle 上五个阶段都有产物，且 seq 沿 STAGE_ORDER 严格递增
+    # every bundle has artifacts for all five stages, and seq strictly increases along STAGE_ORDER
     for b in bundles:
         seqs = []
         for s in STAGE_ORDER:
             art = b.get(s, f"dummy_{s}")
-            assert art is not None, f"{b.trace_id} 缺 {s} 产物"
+            assert art is not None, f"{b.trace_id} missing {s} artifact"
             seqs.append(art["seq"])
-        assert seqs == sorted(seqs), "阶段必须按 represent→…→recover 顺序执行"
+        assert seqs == sorted(seqs), "stages must execute in represent->...->recover order"
 
-    # 产物落盘：report.json + 每轨迹每阶段一个文件
+    # artifacts persisted: report.json + one file per trajectory per stage
     artifacts_dir = out / "artifacts"
     assert (artifacts_dir / "report.json").exists()
     for b in bundles:

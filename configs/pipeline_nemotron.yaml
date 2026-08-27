@@ -1,7 +1,7 @@
-# 真实 LLM 配置（OpenRouter 免费档：nvidia/nemotron-3.5-lightning:free）
-# 需要环境变量：OPENAI_API_KEY（OpenRouter sk-or-v1-...）、
+# Real LLM configuration (OpenRouter free tier: nvidia/nemotron-3.5-lightning:free)
+# Requires environment variables: OPENAI_API_KEY (OpenRouter sk-or-v1-...) and
 #               OPENAI_BASE_URL=https://openrouter.ai/api/v1
-# 依赖：pip install 'atap[llm]'
+# Dependency: pip install 'atap[llm]'
 run_name: nemotron-full-pipeline
 seed: 7
 
@@ -11,9 +11,9 @@ source:
 
 llm:
   type: openai
-  model: "nvidia/nemotron-3.5-lightning:free"   # OpenRouter 免费档模型
-  temperature: 0.0                               # 判官类任务取 0 保证可复现
-  request_interval: 3.0                          # 免费档限流更紧，加大节流间隔
+  model: "nvidia/nemotron-3.5-lightning:free"   # OpenRouter free-tier model
+  temperature: 0.0                               # 0 for judge-style tasks to guarantee reproducibility
+  request_interval: 3.0                          # Free-tier rate limits are tighter, so a larger throttling interval
 
 sandbox:
   type: toy
@@ -27,7 +27,7 @@ stages:
   analyze:
     - name: judge_eval
       params:
-        only_failures: false      # 成功轨迹也评测（分数基线）
+        only_failures: false      # Successful trajectories are also evaluated (score baseline)
   classify:
     - mast_judge
   attribute:

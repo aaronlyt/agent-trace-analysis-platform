@@ -1,30 +1,30 @@
-# 离线全链路配置（FakeLLM 确定性判官 + 玩具沙盒，零网络可复现）
+# Offline full-chain configuration (FakeLLM deterministic judge + toy sandbox, zero-network reproducible)
 run_name: offline-full-pipeline
 seed: 7
 
 source:
   type: jsonl
-  path: runs/demo/traces.jsonl     # 先跑 `atap demo` 生成，或用 atap.sandbox 自写
+  path: runs/demo/traces.jsonl     # Generate first via `atap demo`, or write your own with atap.sandbox
 
 llm:
-  type: fake                        # 确定性伪判官（规则化症状检测，不用 ground truth）
+  type: fake                        # Deterministic pseudo-judge (rule-based symptom detection, no ground truth used)
 
 sandbox:
-  type: toy                         # ReplayEnvironment：定向重跑的执行侧
+  type: toy                         # ReplayEnvironment: the execution side of targeted rerun
 
-closed_loop: true                   # recover 产物自动回到 analyze 验证改善（环节6→3）
+closed_loop: true                   # recover outputs automatically flow back to analyze to verify improvement (step 6 → 3)
 
 stages:
   represent:
-    - canonical_events              # R0：span 树拍平为统一事件流
-    - ssf                           # R1：显著性折叠（TrajAudit 2605.26563）
+    - canonical_events              # R0: span tree flattened into a unified event stream
+    - ssf                           # R1: saliency folding (TrajAudit 2605.26563)
   analyze:
-    - judge_eval                    # LLM-as-judge 评测（MAST 判官管线风格）
+    - judge_eval                    # LLM-as-judge evaluation (MAST judge-pipeline style)
   classify:
-    - mast_judge                    # MAST 14 模式打标（2503.13657）
+    - mast_judge                    # MAST 14-failure-mode labeling (2503.13657)
   attribute:
-    - all_at_once                   # L1 单遍归因（Who&When 2505.00212）
+    - all_at_once                   # L1 single-pass attribution (Who&When 2505.00212)
   recover:
-    - name: targeted_rerun          # 定向重跑（AgentDebug 2509.25370）
+    - name: targeted_rerun          # Targeted rerun (AgentDebug 2509.25370)
       params:
         max_rounds: 5

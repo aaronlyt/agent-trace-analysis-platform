@@ -1,4 +1,5 @@
-"""测试辅助 —— 程序化构造 R0 轨迹（研究问答玩具域，与 sandbox 同构）。"""
+"""Test helpers -- programmatically build R0 trajectories (toy research-QA
+domain, isomorphic to the sandbox)."""
 
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ def _ev(i: int, kind: str, agent: str, action: str | None = None,
 
 DOC_TEXT = (
     "TrajAudit proposes semantic saliency folding. " * 20
-)  # 长观测，供 SSF 折叠测试
+)  # long observation, for SSF folding tests
 
 
 def success_trace(trace_id: str = "t-ok-1") -> Trajectory:
@@ -68,7 +69,8 @@ def success_trace(trace_id: str = "t-ok-1") -> Trajectory:
 
 
 def failure_trace_ungrounded(trace_id: str = "t-fail-1") -> Trajectory:
-    """失败轨迹：reporter 引用了检索到但从未 read 过的 d3（无据引用）。"""
+    """Failure trajectory: the reporter cites d3, which was retrieved but
+    never read (ungrounded citation)."""
     events = [
         _ev(0, TASK_START, "env", payload={"task": "which tool does TrajAudit propose?"}),
         _ev(1, HANDOFF, "planner", phase="plan",
