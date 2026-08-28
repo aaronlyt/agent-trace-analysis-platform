@@ -1,11 +1,47 @@
+<div align="center">
+
 # Agent Trace Analysis Platform（atap）
 
+**定位、解释并修复 LLM Agent 失败 —— 从原始轨迹到验证恢复的一条可插拔流水线**
+
+[![CI](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
+[![Coverage](https://raw.githubusercontent.com/aaronlyt/agent-trace-analysis-platform/badges/coverage.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/aaronlyt/agent-trace-analysis-platform)](https://github.com/aaronlyt/agent-trace-analysis-platform/releases)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![Tests](https://img.shields.io/badge/tests-332%20passed-brightgreen)
-![Version](https://img.shields.io/badge/version-0.1.0-orange)
-![License](https://img.shields.io/badge/license-MIT-green)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 [English](README.md) | **简体中文**
+
+<img src="docs/assets/demo.gif" alt="atap 终端演示" width="100%">
+
+```bash
+git clone https://github.com/aaronlyt/agent-trace-analysis-platform && cd agent-trace-analysis-platform
+pip install -e ".[dev,llm]"
+atap demo    # 离线端到端流水线：FakeLLM 伪判官、确定性、零网络
+```
+
+**阶段与方法** —— 六环节流水线，24 个算法：
+
+[![采集](https://img.shields.io/badge/%E9%87%87%E9%9B%86-%E2%9C%85_1_%E7%AE%97%E6%B3%95_(JSONL%C2%B7Langfuse%C2%B7OTel)-brightgreen)](#已实现算法)
+[![表征](https://img.shields.io/badge/%E8%A1%A8%E5%BE%81-%E2%9C%85_7_%E7%AE%97%E6%B3%95-brightgreen)](#已实现算法)
+[![分析](https://img.shields.io/badge/%E5%88%86%E6%9E%90-%E2%9C%85_3_%E7%AE%97%E6%B3%95-brightgreen)](#已实现算法)
+[![分类](https://img.shields.io/badge/%E5%88%86%E7%B1%BB-%E2%9C%85_3_%E7%AE%97%E6%B3%95-brightgreen)](#已实现算法)
+[![归因](https://img.shields.io/badge/%E5%BD%92%E5%9B%A0-%E2%9C%85_8_%E7%AE%97%E6%B3%95-brightgreen)](#已实现算法)
+[![恢复](https://img.shields.io/badge/%E6%81%A2%E5%A4%8D-%E2%9C%85_3_%E7%AE%97%E6%B3%95-brightgreen)](#已实现算法)
+
+**交付状态**：
+
+[![阶段一](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5%E4%B8%80-%E6%9E%B6%E6%9E%84%E9%AA%A8%E6%9E%B6%20%E2%9C%85-brightgreen)](#路线图)
+[![阶段二](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5%E4%BA%8C-%E5%9E%82%E7%9B%B4%E5%88%87%E7%89%87%20%E2%9C%85-brightgreen)](#路线图)
+[![阶段三](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5%E4%B8%89-L0%2FL2%20%E4%BB%A3%E4%BB%B7%E9%98%B6%E6%A2%AF%20%E2%9C%85-brightgreen)](#路线图)
+[![阶段四A](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5%E5%9B%9BA-%E7%A1%AE%E5%AE%9A%E6%80%A7%E5%B1%82%20%E2%9C%85-brightgreen)](#路线图)
+[![阶段四B](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5%E5%9B%9BB-LLM%20%E8%A1%A8%E5%BE%81%2B%E5%BD%92%E5%9B%A0%20%E2%9C%85-brightgreen)](#路线图)
+[![阶段四C](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5%E5%9B%9BC-%E5%8F%8D%E4%BA%8B%E5%AE%9E%E9%87%8D%E6%94%BE%20%E2%9C%85-brightgreen)](#路线图)
+[![阶段四D](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5%E5%9B%9BD-Langfuse%2FOTel%20%E9%80%82%E9%85%8D%20%E2%9C%85-brightgreen)](#路线图)
+[![下一步](https://img.shields.io/badge/%E4%B8%8B%E4%B8%80%E6%AD%A5-%E7%9C%9F%E5%AE%9E%E6%95%B0%E6%8D%AE%E9%9B%86%E8%AF%84%E6%B5%8B%20%F0%9F%93%8B-blue)](#路线图)
+[![下一步](https://img.shields.io/badge/%E4%B8%8B%E4%B8%80%E6%AD%A5-%E6%B2%99%E7%9B%92%E8%BF%9B%E5%8C%96%20%F0%9F%93%8B-blue)](#路线图)
+
+</div>
 
 Agent Trace Analysis Platform（**atap**，Agent 轨迹分析平台）是一个面向
 LLM Agent 执行轨迹分析的可插拔框架：读入原始轨迹，完成**表征**、

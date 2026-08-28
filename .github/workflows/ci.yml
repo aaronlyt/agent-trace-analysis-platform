@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,llm]" pytest-cov
+
+      - name: Test
+        run: pytest --cov=atap --cov-report=term-missing
+
+      - name: Generate coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.python-version == '3.12'
+        run: |
+          coverage json -o /tmp/cov.json -q
+          python - <<'EOF'
+          import json
+          pct = json.load(open('/tmp/cov.json'))['totals']['percent_covered']
+          p, c = f"{pct:.0f}%", ('brightgreen' if pct >= 90 else 'green' if pct >= 75
+                                 else 'yellow' if pct >= 60 else 'red')
+          svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="106" height="20" role="img">'
+                 f'<title>coverage: {p}</title>'
+                 f'<linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/>'
+                 f'<stop offset="1" stop-opacity=".1"/></linearGradient>'
+                 f'<clipPath id="r"><rect width="106" height="20" rx="3" fill="#fff"/></clipPath>'
+                 f'<g clip-path="url(#r)"><rect width="64" height="20" fill="#555"/>'
+                 f'<rect x="64" width="42" height="20" fill="#{c}"/>'
+                 f'<rect width="106" height="20" fill="url(#s)"/></g>'
+                 f'<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="110">'
+                 f'<text x="330" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="520">coverage</text>'
+                 f'<text x="330" y="140" transform="scale(.1)" textLength="520">coverage</text>'
+                 f'<text x="845" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="320">{p}</text>'
+                 f'<text x="845" y="140" transform="scale(.1)" textLength="320">{p}</text></g></svg>')
+          open('/tmp/coverage.svg', 'w').write(svg)
+          print('coverage:', p)
+          EOF
+
+      - name: Push badge to badges branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.python-version == '3.12'
+        run: |
+          mkdir -p /tmp/badge && mv /tmp/coverage.svg /tmp/badge/
+          cd /tmp/badge
+          git init -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage.svg
+          git commit -m "chore: update coverage badge"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

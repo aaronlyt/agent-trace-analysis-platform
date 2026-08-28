@@ -1,11 +1,47 @@
+<div align="center">
+
 # Agent Trace Analysis Platform (atap)
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![Tests](https://img.shields.io/badge/tests-332%20passed-brightgreen)
-![Version](https://img.shields.io/badge/version-0.1.0-orange)
-![License](https://img.shields.io/badge/license-MIT-green)
+**Find, explain, and fix LLM-agent failures — one pluggable pipeline from raw traces to verified recovery**
 
-**English** | [简体中文](README.zh-CN.md)
+[![CI](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
+[![Coverage](https://raw.githubusercontent.com/aaronlyt/agent-trace-analysis-platform/badges/coverage.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/aaronlyt/agent-trace-analysis-platform)](https://github.com/aaronlyt/agent-trace-analysis-platform/releases)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+<img src="docs/assets/demo.gif" alt="atap terminal demo" width="100%">
+
+```bash
+git clone https://github.com/aaronlyt/agent-trace-analysis-platform && cd agent-trace-analysis-platform
+pip install -e ".[dev,llm]"
+atap demo    # offline end-to-end pipeline: FakeLLM judge, deterministic, zero network
+```
+
+**Stages & methods** — 24 algorithms across the six-stage pipeline:
+
+[![collection](https://img.shields.io/badge/collection-%E2%9C%85_1_alg_(JSONL·Langfuse·OTel)-brightgreen)](#implemented-algorithms)
+[![represent](https://img.shields.io/badge/represent-%E2%9C%85_7_algorithms-brightgreen)](#implemented-algorithms)
+[![analyze](https://img.shields.io/badge/analyze-%E2%9C%85_3_algorithms-brightgreen)](#implemented-algorithms)
+[![classify](https://img.shields.io/badge/classify-%E2%9C%85_3_algorithms-brightgreen)](#implemented-algorithms)
+[![attribute](https://img.shields.io/badge/attribute-%E2%9C%85_8_algorithms-brightgreen)](#implemented-algorithms)
+[![recover](https://img.shields.io/badge/recover-%E2%9C%85_3_algorithms-brightgreen)](#implemented-algorithms)
+
+**Delivery status**:
+
+[![Phase 1](https://img.shields.io/badge/Phase%201-architecture%20skeleton%20%E2%9C%85-brightgreen)](#roadmap)
+[![Phase 2](https://img.shields.io/badge/Phase%202-vertical%20slice%20%E2%9C%85-brightgreen)](#roadmap)
+[![Phase 3](https://img.shields.io/badge/Phase%203-L0%2FL2%20cost%20ladder%20%E2%9C%85-brightgreen)](#roadmap)
+[![Phase 4A](https://img.shields.io/badge/Phase%204A-deterministic%20layer%20%E2%9C%85-brightgreen)](#roadmap)
+[![Phase 4B](https://img.shields.io/badge/Phase%204B-LLM%20repr.%20%2B%20attribution%20%E2%9C%85-brightgreen)](#roadmap)
+[![Phase 4C](https://img.shields.io/badge/Phase%204C-counterfactual%20replay%20%E2%9C%85-brightgreen)](#roadmap)
+[![Phase 4D](https://img.shields.io/badge/Phase%204D-Langfuse%2FOTel%20adapters%20%E2%9C%85-brightgreen)](#roadmap)
+[![next](https://img.shields.io/badge/next-real%20dataset%20eval%20%F0%9F%93%8B-blue)](#roadmap)
+[![next](https://img.shields.io/badge/next-sandbox%20evolution%20%F0%9F%93%8B-blue)](#roadmap)
+
+</div>
 
 Agent Trace Analysis Platform (**atap**) is a pluggable framework for analyzing
 the execution traces of LLM agents: it takes raw traces, **represents** them,
