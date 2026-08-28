@@ -26,12 +26,6 @@ atap demo    # 离线端到端流水线：FakeLLM 伪判官、确定性、零网
 
 [![分类](https://img.shields.io/badge/%E5%88%86%E7%B1%BB-%E2%9C%85_3-brightgreen)](#已实现算法) [![归因](https://img.shields.io/badge/%E5%BD%92%E5%9B%A0-%E2%9C%85_8-brightgreen)](#已实现算法) [![恢复](https://img.shields.io/badge/%E6%81%A2%E5%A4%8D-%E2%9C%85_3-brightgreen)](#已实现算法)
 
-<sub><b>交付状态 —— 阶段 1 → 4D</b></sub>
-
-[![阶段一](https://img.shields.io/badge/%E4%B8%80-%E6%9E%B6%E6%9E%84%E9%AA%A8%E6%9E%B6_%E2%9C%85-brightgreen)](#路线图) [![阶段二](https://img.shields.io/badge/%E4%BA%8C-%E5%9E%82%E7%9B%B4%E5%88%87%E7%89%87_%E2%9C%85-brightgreen)](#路线图) [![阶段三](https://img.shields.io/badge/%E4%B8%89-L0%2FL2%E4%BB%A3%E4%BB%B7%E9%98%B6%E6%A2%AF_%E2%9C%85-brightgreen)](#路线图) [![阶段四A](https://img.shields.io/badge/%E5%9B%9BA-%E7%A1%AE%E5%AE%9A%E6%80%A7%E5%B1%82_%E2%9C%85-brightgreen)](#路线图)
-
-[![阶段四B](https://img.shields.io/badge/%E5%9B%9BB-LLM%E8%A1%A8%E5%BE%81%2B%E5%BD%92%E5%9B%A0_%E2%9C%85-brightgreen)](#路线图) [![阶段四C](https://img.shields.io/badge/%E5%9B%9BC-%E5%8F%8D%E4%BA%8B%E5%AE%9E%E9%87%8D%E6%94%BE_%E2%9C%85-brightgreen)](#路线图) [![阶段四D](https://img.shields.io/badge/%E5%9B%9BD-Langfuse%2FOTel%E9%80%82%E9%85%8D_%E2%9C%85-brightgreen)](#路线图) [![计划中](https://img.shields.io/badge/%E8%AE%A1%E5%88%92%E4%B8%AD-%E7%9C%9F%E5%AE%9E%E6%95%B0%E6%8D%AE%E9%9B%86_%C2%B7_%E6%B2%99%E7%9B%92_%F0%9F%93%8B-blue)](#路线图)
-
 </div>
 
 Agent Trace Analysis Platform（**atap**，Agent 轨迹分析平台）是一个面向

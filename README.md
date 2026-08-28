@@ -26,12 +26,6 @@ atap demo    # offline end-to-end pipeline: FakeLLM judge, deterministic, zero n
 
 [![classify](https://img.shields.io/badge/classify-%E2%9C%85_3-brightgreen)](#implemented-algorithms) [![attribute](https://img.shields.io/badge/attribute-%E2%9C%85_8-brightgreen)](#implemented-algorithms) [![recover](https://img.shields.io/badge/recover-%E2%9C%85_3-brightgreen)](#implemented-algorithms)
 
-<sub><b>DELIVERY — PHASES 1 → 4D</b></sub>
-
-[![Phase 1](https://img.shields.io/badge/P1-skeleton_%E2%9C%85-brightgreen)](#roadmap) [![Phase 2](https://img.shields.io/badge/P2-vertical_slice_%E2%9C%85-brightgreen)](#roadmap) [![Phase 3](https://img.shields.io/badge/P3-L0%2FL2_ladder_%E2%9C%85-brightgreen)](#roadmap) [![Phase 4A](https://img.shields.io/badge/P4A-deterministic_layer_%E2%9C%85-brightgreen)](#roadmap)
-
-[![Phase 4B](https://img.shields.io/badge/P4B-LLM_repr.%2B_attribution_%E2%9C%85-brightgreen)](#roadmap) [![Phase 4C](https://img.shields.io/badge/P4C-counterfactual_replay_%E2%9C%85-brightgreen)](#roadmap) [![Phase 4D](https://img.shields.io/badge/P4D-Langfuse%2FOTel_adapters_%E2%9C%85-brightgreen)](#roadmap) [![planned](https://img.shields.io/badge/planned-real_data_%C2%B7_sandbox_%F0%9F%93%8B-blue)](#roadmap)
-
 </div>
 
 Agent Trace Analysis Platform (**atap**) is a pluggable framework for analyzing
