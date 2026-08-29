@@ -2,7 +2,8 @@
 
 # Agent Trace Analysis Platform (atap)
 
-**Find, explain, and fix LLM-agent failures — one pluggable pipeline from raw traces to verified recovery**
+**The attribution & recovery layer on top of your existing agent observability stack —
+find, explain, and fix LLM-agent failures, then write the answers back as scores**
 
 [![CI](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
 [![Coverage](https://raw.githubusercontent.com/aaronlyt/agent-trace-analysis-platform/badges/coverage.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
@@ -12,7 +13,13 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-<img src="docs/assets/demo.gif" alt="atap terminal demo" width="100%">
+<img src="docs/assets/langfuse_roundtrip.gif" alt="atap external evaluation on a live Langfuse instance" width="100%">
+
+<sub>atap × Langfuse: push a corpus → pull live traces → analyze / classify / attribute →
+root-cause + confidence + blamed-step written back as Scores (terminal-only demo:
+`docs/assets/demo.gif`)</sub>
+
+<img src="docs/assets/integration.svg" alt="atap integration architecture: trace sources → adapters → six-stage pipeline → scores written back" width="100%">
 
 ```bash
 git clone https://github.com/aaronlyt/agent-trace-analysis-platform && cd agent-trace-analysis-platform
@@ -28,17 +35,20 @@ atap demo    # offline end-to-end pipeline: FakeLLM judge, deterministic, zero n
 
 </div>
 
-Agent Trace Analysis Platform (**atap**) is a pluggable framework for analyzing
-the execution traces of LLM agents: it takes raw traces, **represents** them,
-**analyzes and classifies** failures, **attributes** each failure to its root
-cause — the responsible agent and the decisive step — then **recovers** it,
-verifying the fix in a closed loop. It implements the six-stage pipeline
-(collection → representation → analysis/evaluation → error classification → failure attribution → recovery)
-that runs across recent agent error-analysis research — one algorithm per module,
-**transformers-style**: every algorithm inherits a stage base class, registers itself in
-a `Registry`, and composes into
-pipelines via YAML. Algorithms talk to each other only through artifacts — never through
-imports (enforced by import-invariant tests).
+Agent Trace Analysis Platform (**atap**) is not another tracing platform — it is the
+**attribution & recovery layer that sits on top of the observability stack you already
+run**. It pulls traces from a live Langfuse instance (or JSONL / OTel / Phoenix
+adapters), flattens them into one canonical event stream, and runs the six-stage
+pipeline shared by recent agent error-analysis research — **representation →
+analysis/evaluation → error classification → failure attribution → recovery** — then
+writes the verdicts back where your team already looks: Langfuse scores carry the
+root-cause code and confidence on the trace, a blamed-step marker on the responsible
+observation, and the full hypothesis plus run-batch identity in score metadata.
+
+The pipeline is **transformers-style pluggable**: one algorithm per module, every
+algorithm inherits a stage base class, registers itself in a `Registry`, and composes
+into pipelines via YAML. Algorithms talk to each other only through artifacts — never
+through imports (enforced by import-invariant tests).
 
 - **24 algorithms across 5 stages**, each faithful to a specific paper (see the table below)
 - **Deterministic offline mode** — FakeLLM pseudo-judge + toy sandbox with injected faults,
@@ -50,6 +60,11 @@ imports (enforced by import-invariant tests).
   (`closed_loop: true`)
 - **Ingest & export** — Langfuse v3 ingestion / OTel GenAI semantic conventions, with
   field-level roundtrip equivalence and ground-truth leak guards on export
+- **Live external evaluation** — `atap langfuse-eval` pulls traces from a running
+  Langfuse instance and writes attribution results back as Scores on the
+  original traces (root-cause + confidence on the trace, a blamed-step marker
+  on the responsible observation); re-evaluations are batch-distinguishable via
+  score metadata (`run_id` / `llm` / full hypothesis)
 
 > **Disclaimer** — this project is a learning- and research-oriented implementation of
 > the agent error-analysis pipeline. Validation is **limited**: acceptance numbers come
@@ -62,7 +77,7 @@ imports (enforced by import-invariant tests).
 
 ```
  ① collection                     ② storage
- io/  (JSONL · Langfuse v3 · OTel GenAI)  ──▶  traces.jsonl
+ io/  (JSONL · Langfuse v3 · OTel GenAI · live Langfuse API)  ──▶  traces.jsonl
                                                        │
                                                        ▼
  ③ representation — represent/
@@ -221,6 +236,28 @@ atap run --config configs/pipeline_llm.yaml
 (smoke variants for specific models) configurations used to produce the real-model
 numbers below.
 
+### External evaluation: write attribution back to Langfuse
+
+atap can act as an **external evaluation pipeline** over a live Langfuse
+deployment: pull traces by tag/time window, run your analysis/classify/attribute
+stack on them, and write the results back as Scores on the original traces —
+the failure attribution shows up directly in your own Langfuse UI.
+
+```bash
+pip install -e ".[llm,langfuse]"
+export LANGFUSE_BASE_URL=... LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
+atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
+    --tags production --since 24h --dry-run    # dry-run first; drop the flag to write
+```
+
+`--dry-run` prints the scores without sending anything; traces that already
+carry an `atap:*` score are skipped (idempotent — `--force` re-evaluates).
+Credentials come from the environment only. A self-hosted demo instance and the
+full round-trip walkthrough (seed with `atap langfuse-push`, evaluate, watch the
+scores appear) live in
+[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) and
+`docker-compose.langfuse.yml`.
+
 ### Auditing and logs
 
 Every `run` / `demo` / `compare` writes two records under `runs/<name>/`:
@@ -355,7 +392,7 @@ src/
   attribute/   # L0–L3 failure attribution (cost ladder)
   recover/     # targeted rerun · feedback injection · do-then-verify
   llm/         # FakeLLM pseudo-judge · OpenAI-compatible client · call auditor
-  io/          # JSONL store · Langfuse / OTel adapters · export leak guard
+  io/          # JSONL store · Langfuse / OTel adapters · live Langfuse bridge · export leak guard
   sandbox/     # toy research-QA environment with fault injection and drift corpora
 configs/       # runnable pipeline configurations (offline · LLM · realtest · final)
 tests/         # 332 tests: e2e, invariants, leak regressions, replay integrity
@@ -368,9 +405,11 @@ docs/          # plans · audit reports · dev log
 - [x] Phase 4B — LLM representation & attribution: `claim_ledger`+`claim_audit` (DRIFT), `tree_diagnosis` (CodeTracer), `hcg`+`chief` (CHIEF)
 - [x] Phase 4C — L3 counterfactual replay: sandbox `replay_intervene`, `counterfactual_replay` (TraceElephant), `dover` (DoVer)
 - [x] Phase 4D — collection adapters: Langfuse v3 ingestion, OTel GenAI semconv, `atap export` + roundtrip
+- [x] Phase 4E — live Langfuse bridge: `atap langfuse-eval` (pull → pipeline → Scores write-back) + `atap langfuse-push`
 - [ ] fuse SBFL as an L2 prior (currently a standalone algorithm); AgenTracer-style GRPO fine-tuned tracer
 - [ ] sandbox evolution — grow the toy research-QA sandbox into more realistic multi-scenario execution environments (richer task types, real tool calls, broader fault injection)
 - [ ] real-dataset evaluation — validate the pipeline on public real agent-trajectory datasets/benchmarks, replacing constructed-corpus acceptance numbers
 
 Detailed plans: [docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
+integration guide: [docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) ·
 development log: [docs/README_dev_log.md](docs/README_dev_log.md)

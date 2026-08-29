@@ -1,0 +1,16 @@
+{
+ "_comment": "attribution regression baseline -- `atap compare` on the deterministic offline corpus (FakeLLM). CI fails if any metric drops below these numbers. Regenerate: atap corpus --out t.jsonl && atap compare --config configs/pipeline_offline.yaml --traces t.jsonl --out o && copy rows[].metrics into configs (improvements should be committed up).",
+ "rows": [
+  {
+   "config": "configs/pipeline_offline.yaml",
+   "metrics": {
+    "n_failed": 18,
+    "step_hits": 18,
+    "agent_hits": 18,
+    "code_hits": 18,
+    "recovered": 18,
+    "closed_loop_improved": 18
+   }
+  }
+ ]
+}

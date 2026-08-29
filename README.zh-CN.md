@@ -2,7 +2,7 @@
 
 # Agent Trace Analysis Platform（atap）
 
-**定位、解释并修复 LLM Agent 失败 —— 从原始轨迹到验证恢复的一条可插拔流水线**
+**架在你现有 Agent 可观测性栈之上的归因与恢复层 —— 定位、解释并修复 LLM Agent 失败，把结论作为 Score 写回原处**
 
 [![CI](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
 [![Coverage](https://raw.githubusercontent.com/aaronlyt/agent-trace-analysis-platform/badges/coverage.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
@@ -12,7 +12,11 @@
 
 [English](README.md) | **简体中文**
 
-<img src="docs/assets/demo.gif" alt="atap 终端演示" width="100%">
+<img src="docs/assets/langfuse_roundtrip.gif" alt="atap 在活 Langfuse 实例上的外部评估" width="100%">
+
+<sub>atap × Langfuse：推送语料 → 拉取活轨迹 → 分析/分类/归因 → 根因码 + 置信度 + 被归因步标记作为 Score 写回（纯终端演示见 `docs/assets/demo.gif`）</sub>
+
+<img src="docs/assets/integration.svg" alt="atap 集成架构：轨迹来源 → 适配器 → 六段流水线 → Score 回写" width="100%">
 
 ```bash
 git clone https://github.com/aaronlyt/agent-trace-analysis-platform && cd agent-trace-analysis-platform
@@ -28,12 +32,15 @@ atap demo    # 离线端到端流水线：FakeLLM 伪判官、确定性、零网
 
 </div>
 
-Agent Trace Analysis Platform（**atap**，Agent 轨迹分析平台）是一个面向
-LLM Agent 执行轨迹分析的可插拔框架：读入原始轨迹，完成**表征**、
-**分析评测与错误分类打标**、把每条失败轨迹**归因**到根因——责任 agent 与
-致因步——再**恢复**并在闭环中验证修复效果。它实现近年 agent 错误分析研究中通行的六环节流程
-（采集 → 表征 → 分析评测 → 错误分类打标 → 失败归因 → 恢复闭环），
-做成 **transformers 式可插拔框架**：每个算法一个模块、继承阶段基类、注册进
+Agent Trace Analysis Platform（**atap**）不是又一个追踪平台——它是**架在你
+已有可观测性栈之上的归因与恢复层**。它从运行中的 Langfuse 拉取轨迹（或经
+JSONL / OTel / Phoenix 适配器读入），拉平成统一事件流，跑近年 agent 错误
+分析研究通行的六环节流水线——**表征 → 分析评测 → 错误分类 → 失败归因 →
+恢复闭环**——再把结论写回团队本来就看得见的地方：Langfuse score 在 trace
+上携带根因码与置信度、在被归因的 observation 上打 blamed-step 标记，score
+metadata 里带完整假设与运行批次标识。
+
+流水线是 **transformers 式可插拔**：每个算法一个模块、继承阶段基类、注册进
 Registry、YAML 配置组合 pipeline；算法之间只通过产物（artifact）解耦，不互相
 import（由 import 图不变量测试强制）。
 
@@ -43,6 +50,7 @@ import（由 import 图不变量测试强制）。
 - **统一归因契约** —— 规则/判官/图/重放等一切定位算法产出同一个 `Hypothesis` 结构，恢复阶段只消费它
 - **恢复闭环** —— 恢复产物自动回到分析阶段验证（`closed_loop: true`）
 - **采集适配** —— Langfuse v3 ingestion / OTel GenAI 语义约定导入导出，roundtrip 字段级等价，导出侧防 GT 泄漏
+- **活实例外部评估** —— `atap langfuse-eval` 从运行中的 Langfuse 拉取 trace，把归因结果作为 Score 写回原 trace（trace 级根因码 + 置信度，被归因步骤的 observation 上打 blamed-step 标记）；重复评估可按 score metadata 区分批次（`run_id` / `llm` / 完整假设字段）
 
 > **声明** —— 本项目是对 agent 错误分析流程的学习/研究性质实现。**测试有限**：
 > 验收数字来自构造故障的玩具沙盒语料与少量真实模型轮次（见[验证状态](#验证状态)），
@@ -53,7 +61,7 @@ import（由 import 图不变量测试强制）。
 
 ```
  ①采集                             ②存储
- io/（JSONL · Langfuse v3 · OTel GenAI） ──▶  traces.jsonl
+ io/（JSONL · Langfuse v3 · OTel GenAI · 活实例 API） ──▶  traces.jsonl
                                                    │
                                                    ▼
  ③表征 — represent/
@@ -206,6 +214,25 @@ atap run --config configs/pipeline_llm.yaml
 `configs/` 中另有产出下述真实模型数字所用的 `final_*`（上线前全量测试八档）与
 `realtest_*`（特定模型冒烟档）配置。
 
+### 外部评估：把归因结果写回 Langfuse
+
+atap 可以作为**活 Langfuse 实例的外部评估管线**：按标签/时间窗拉取 trace，
+跑你的分析/分类/归因栈，再把结果作为 Score 写回原 trace——失败归因直接出现在
+你自己的 Langfuse 面板上。
+
+```bash
+pip install -e ".[llm,langfuse]"
+export LANGFUSE_BASE_URL=... LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
+atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
+    --tags production --since 24h --dry-run    # 先空跑确认，去掉该旗标即真写
+```
+
+`--dry-run` 只打印将写入的 score、不发任何请求；已带 `atap:*` score 的 trace
+自动跳过（幂等，`--force` 强制重评）。凭据只从环境变量读取。自建演示实例与
+完整 round-trip 演示（`atap langfuse-push` 播种 → 评估 → 面板查看 score）见
+[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) 与
+`docker-compose.langfuse.yml`。
+
 ### 日志与调用审计
 
 每次 `run / demo / compare` 在 `runs/<name>/` 下自动落两份记录：
@@ -336,7 +363,7 @@ src/
   attribute/   # L0–L3 失败归因（成本阶梯）
   recover/     # 定向重跑 · 反馈注入 · do-then-verify
   llm/         # FakeLLM 伪判官 · OpenAI 兼容客户端 · 调用审计
-  io/          # JSONL 存储 · Langfuse/OTel 适配器 · 导出防泄漏
+  io/          # JSONL 存储 · Langfuse/OTel 适配器 · 活实例桥接 · 导出防泄漏
   sandbox/     # 玩具研究问答沙盒（故障注入 + 漂移语料）
 configs/       # 可运行配置（offline · LLM · realtest · final）
 tests/         # 332 个测试：e2e · 不变量 · 防泄漏回归 · 重放完整性
@@ -349,9 +376,11 @@ docs/          # 计划 · 审计报告 · 开发日志
 - [x] 阶段四B LLM 表征与归因升级：`claim_ledger`+`claim_audit`（DRIFT）、`tree_diagnosis`（CodeTracer）、`hcg`+`chief`（CHIEF）
 - [x] 阶段四C L3 反事实重放：沙盒 `replay_intervene` 基建、`counterfactual_replay`（TraceElephant）、`dover`（DoVer）
 - [x] 阶段四D 采集适配器：Langfuse v3 ingestion、OTel GenAI semconv、`atap export` + roundtrip
+- [x] 阶段四E 活实例桥接：`atap langfuse-eval`（拉取 → 流水线 → Score 回写）+ `atap langfuse-push`
 - [ ] SBFL 作为 L2 先验的实际融合（当前为独立算法）；AgenTracer 式 GRPO 微调 tracer
 - [ ] 沙盒演进 —— 从玩具研究问答沙盒走向更真实的多场景执行环境（更丰富的任务类型、真实工具调用、更多故障注入）
 - [ ] 真实数据集评测 —— 在公开的真实 agent 轨迹数据集/基准上验证管线，替代构造语料的验收数字
 
 详细计划：[docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
+集成指南：[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) ·
 开发日志：[docs/README_dev_log.md](docs/README_dev_log.md)

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arrb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0969da"/>
+    </marker>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="959" height="429" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+
+  <!-- ================= left: trace sources ================= -->
+  <text x="24" y="34" font-size="15" font-weight="600" fill="#57606a">your observability stack</text>
+  <g font-size="13">
+    <rect x="24" y="52" width="190" height="52" rx="6" fill="#ddf4ff" stroke="#54aeff"/>
+    <text x="119" y="74" text-anchor="middle" fill="#0969da" font-weight="600">Langfuse</text>
+    <text x="119" y="92" text-anchor="middle" fill="#57606a">live traces · REST pull</text>
+
+    <rect x="24" y="118" width="190" height="52" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="119" y="140" text-anchor="middle" fill="#24292f" font-weight="600">Phoenix / OTel</text>
+    <text x="119" y="158" text-anchor="middle" fill="#57606a">GenAI semconv · adapter</text>
+
+    <rect x="24" y="184" width="190" height="52" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="119" y="206" text-anchor="middle" fill="#24292f" font-weight="600">OpenInference</text>
+    <text x="119" y="224" text-anchor="middle" fill="#57606a">span trees · adapter</text>
+
+    <rect x="24" y="250" width="190" height="52" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="119" y="272" text-anchor="middle" fill="#24292f" font-weight="600">JSONL / sandbox</text>
+    <text x="119" y="290" text-anchor="middle" fill="#57606a">offline corpora</text>
+  </g>
+  <text x="24" y="338" font-size="11.5" fill="#8b949e">existing tooling stays put —</text>
+  <text x="24" y="354" font-size="11.5" fill="#8b949e">atap never replaces your tracer</text>
+
+  <!-- arrows sources -> atap -->
+  <path d="M 214 78 C 252 78, 258 118, 292 130" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#arr)"/>
+  <path d="M 214 144 C 244 144, 258 148, 292 152" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#arr)"/>
+  <path d="M 214 210 C 244 210, 258 196, 292 174" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#arr)"/>
+  <path d="M 214 276 C 248 276, 258 230, 292 196" fill="none" stroke="#8b949e" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- ================= middle: atap layer ================= -->
+  <rect x="296" y="52" width="376" height="330" rx="8" fill="#f6f8fa" stroke="#0969da" stroke-width="1.6"/>
+  <text x="484" y="80" text-anchor="middle" font-size="16" font-weight="700" fill="#0969da">atap — attribution &amp; recovery layer</text>
+  <text x="484" y="99" text-anchor="middle" font-size="11.5" fill="#57606a">six-stage pipeline · 24 pluggable algorithms · one Hypothesis contract</text>
+
+  <g font-size="12.5">
+    <rect x="324" y="112" width="320" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+    <text x="484" y="134" text-anchor="middle" fill="#24292f">io/ adapters → <tspan font-family="ui-monospace, Menlo, monospace" fill="#0969da">R0 canonical events</tspan></text>
+
+    <rect x="324" y="156" width="320" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+    <text x="484" y="178" text-anchor="middle" fill="#24292f">represent — HCG · SSF · signatures · ledger · tree</text>
+
+    <rect x="324" y="200" width="320" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+    <text x="484" y="222" text-anchor="middle" fill="#24292f">analyze + classify — judge · MAST 14 modes · rules</text>
+
+    <rect x="324" y="244" width="320" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+    <text x="484" y="266" text-anchor="middle" fill="#24292f">attribute — 8 localizers → <tspan font-family="ui-monospace, Menlo, monospace" fill="#0969da">Hypothesis</tspan></text>
+
+    <rect x="324" y="288" width="320" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+    <text x="484" y="310" text-anchor="middle" fill="#24292f">recover — targeted rerun · feedback · do-then-verify</text>
+  </g>
+
+  <path d="M 484 146 L 484 156 M 484 190 L 484 200 M 484 234 L 484 244 M 484 278 L 484 288"
+        stroke="#8b949e" stroke-width="1.6" marker-end="url(#arr)"/>
+  <!-- closed loop -->
+  <path d="M 644 305 C 668 305, 668 220, 656 218 L 648 218" fill="none" stroke="#1a7f37" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+  <text x="672" y="252" font-size="10.5" fill="#1a7f37" text-anchor="middle" transform="rotate(90 672 252)">closed loop</text>
+  <text x="484" y="348" text-anchor="middle" font-size="11.5" fill="#8b949e">offline: FakeLLM judge + toy sandbox, deterministic · online: any OpenAI-compatible API</text>
+  <text x="484" y="366" text-anchor="middle" font-size="11.5" fill="#8b949e">artifacts only — algorithms never import each other (enforced by invariant tests)</text>
+
+  <!-- arrow atap -> write-back -->
+  <path d="M 672 152 C 700 152, 706 152, 726 152" fill="none" stroke="#0969da" stroke-width="2" marker-end="url(#arrb)"/>
+
+  <!-- ================= right: write-back ================= -->
+  <text x="730" y="120" font-size="15" font-weight="600" fill="#57606a">written back</text>
+  <g font-size="12.5">
+    <rect x="730" y="132" width="206" height="132" rx="6" fill="#dafbe1" stroke="#4ac26b"/>
+    <text x="833" y="155" text-anchor="middle" fill="#116329" font-weight="700">Langfuse Scores</text>
+    <text x="744" y="177" font-family="ui-monospace, Menlo, monospace" font-size="11.5" fill="#116329">atap:root-cause</text>
+    <text x="744" y="195" font-family="ui-monospace, Menlo, monospace" font-size="11.5" fill="#116329">atap:confidence</text>
+    <text x="744" y="213" font-family="ui-monospace, Menlo, monospace" font-size="11.5" fill="#116329">atap:blamed-step</text>
+    <text x="744" y="234" fill="#57606a" font-size="11">on the responsible</text>
+    <text x="744" y="249" fill="#57606a" font-size="11">observation &amp; the trace</text>
+
+    <rect x="730" y="278" width="206" height="60" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="833" y="300" text-anchor="middle" fill="#24292f" font-weight="600">score metadata</text>
+    <text x="833" y="318" text-anchor="middle" fill="#57606a" font-size="11">full hypothesis + run batch id</text>
+
+    <rect x="730" y="352" width="206" height="42" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="833" y="371" text-anchor="middle" fill="#24292f" font-weight="600">local run artifacts</text>
+    <text x="833" y="387" text-anchor="middle" fill="#57606a" font-size="11">audit log · report · qrels eval</text>
+  </g>
+
+  <!-- bottom label -->
+  <text x="480" y="415" text-anchor="middle" font-size="12" fill="#8b949e">pull traces → flatten to R0 → analyze / classify / attribute / recover → scores land next to the traces your team already watches</text>
+</svg>

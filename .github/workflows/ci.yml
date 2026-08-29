@@ -70,3 +70,28 @@ jobs:
           git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  attribution:
+    name: attribution regression gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # Deterministic offline corpus + FakeLLM stack: identical inputs must
+      # reproduce the committed baseline (.github/baselines/attribution.json).
+      # A drop in step/agent/MAST-code hits or recovery fails the build;
+      # improvements pass and should be committed up by regenerating the baseline.
+      - name: Compare against attribution baseline
+        run: |
+          atap corpus --out runs/ci/traces.jsonl
+          atap compare --config configs/pipeline_offline.yaml --traces runs/ci/traces.jsonl --out runs/ci/cmp
+          python scripts/check_attribution_baseline.py .github/baselines/attribution.json runs/ci/cmp/comparison.json
