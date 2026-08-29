@@ -1,0 +1,41 @@
+# External evaluation over a live Langfuse instance (pull -> pipeline -> score write-back)
+#
+# Usage:
+#   export LANGFUSE_BASE_URL=... LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
+#   atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 --since 24h --dry-run
+#
+# The source block doubles as the mapping config: outcome_from derives
+# Trajectory.outcome from a Langfuse score (numeric ops on numeric values);
+# traces without a matching score enter analysis as failures (conservative).
+# agent_keys is the metadata key chain probed for the acting agent when the
+# producer writes no atap metadata (default: agent / agent_name /
+# gen_ai.agent.name / llm.app).
+#
+# For a zero-network rehearsal of the whole loop, switch llm to {type: fake}
+# and point LANGFUSE_* at a self-hosted instance seeded via `atap langfuse-push`
+# (see docs/集成指南_Langfuse.md).
+run_name: langfuse-eval
+seed: 7
+
+source:
+  type: langfuse_api          # credentials come from the environment only
+  outcome_from: {score: user_feedback, op: ">=", value: 1}
+  # agent_keys: [agent, agent_name]
+
+llm:
+  type: openai                # any OpenAI-compatible endpoint
+  model: deepseek-v4-flash
+  temperature: 0.0
+
+closed_loop: false            # live traces have no sandbox to re-execute against
+
+stages:
+  represent:
+    - canonical_events        # required: live traces arrive as a raw span tree
+    - hcg                     # hierarchical causal graph (consumed by chief)
+  analyze:
+    - judge_eval
+  classify:
+    - mast_judge
+  attribute:
+    - chief                   # the best real-model localizer; swap for all_at_once

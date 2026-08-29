@@ -35,9 +35,11 @@ Mapping (R0 ↔ Langfuse; unmapped information goes wholesale into
   time_window/qrels/...) → Trajectory.meta; the ``outcome`` payload is
   consumed into ``Trajectory.outcome`` (score/note fully restored via
   Outcome.from_dict) and leaves no residue key in meta;
-* ``meta["qrels"]`` (gold sufficient set) is kept with trace metadata per
-  the project contract (rg_ug data dependency); strip it yourself if
-  strict leak prevention is required when exporting to external backends.
+* ``meta["qrels"]`` (gold sufficient set) is kept in offline exports per
+  the project contract (rg_ug data dependency). ``export_langfuse(...,
+  external=True)`` (live push to a real server) drops it and neutralizes
+  ``outcome.note`` -- the sandbox's failure note names the injected-fault
+  mechanics, which is ground-truth information off-box.
 """
 
 from __future__ import annotations
@@ -65,7 +67,7 @@ _EVT_TYPE_TO_TYPE = {
 }
 
 
-def export_langfuse(traces: list[Trajectory]) -> dict[str, Any]:
+def export_langfuse(traces: list[Trajectory], *, external: bool = False) -> dict[str, Any]:
     """R0 trajectory list → v3 ingestion batch dict (used both for roundtrip and external consumption).
 
     Consumes the flattened R0 event stream (``trajectory.events``); a
@@ -73,9 +75,16 @@ def export_langfuse(traces: list[Trajectory]) -> dict[str, Any]:
     bare trace-create and lose every event -- flatten it first via
     represent/canonical_events (the CLI export path does this; see
     ``cli._ensure_flattened``).
+
+    ``external=True`` is the live-push mode: ground-truth stripping is
+    tightened (qrels dropped, outcome.note neutralized) -- offline
+    roundtrip files keep both by contract.
     """
     batch: list[dict[str, Any]] = []
     for t in traces:
+        outcome_payload = t.outcome.to_dict()
+        if external and outcome_payload.get("note"):
+            outcome_payload["note"] = ""
         batch.append({
             "id": f"evt-{t.trace_id}-trace",
             "type": "trace-create",
@@ -85,8 +94,8 @@ def export_langfuse(traces: list[Trajectory]) -> dict[str, Any]:
                 "name": t.meta.get("task_id") or t.trace_id,
                 "input": t.task,
                 "metadata": {
-                    **export_safe_meta(t.meta),   # GT not exported (leak prevention)
-                    "outcome": t.outcome.to_dict(),
+                    **export_safe_meta(t.meta, external=external),   # GT not exported (leak prevention)
+                    "outcome": outcome_payload,
                 },
             },
         })

@@ -112,8 +112,21 @@ class JSONLArtifactStore:
 
 def build_source(spec: dict):
     kind = spec.get("type", "jsonl")
+    if kind == "langfuse_api":
+        # the only path-less source: a live instance (credentials come from
+        # the environment, never from the config file)
+        from atap.io.langfuse_live import LangfuseAPISource
+
+        return LangfuseAPISource(
+            base_url=spec.get("base_url"),
+            tags=spec.get("tags"),
+            since=spec.get("since"),
+            limit=spec.get("limit"),
+            outcome_from=spec.get("outcome_from"),
+            agent_keys=spec.get("agent_keys"),
+        )
     if "path" not in spec:
-        raise ConfigError("source requires a path field")
+        raise ConfigError(f"source type {kind!r} requires a path field")
     if kind == "jsonl":
         return JSONLTraceSource(spec["path"])
     if kind == "langfuse":
@@ -125,7 +138,7 @@ def build_source(spec: dict):
 
         return OTelTraceSource(spec["path"])
     raise ConfigError(
-        f"unknown source type: {kind!r} (supported: jsonl / langfuse / otel)"
+        f"unknown source type: {kind!r} (supported: jsonl / langfuse / otel / langfuse_api)"
     )
 
 

@@ -6,6 +6,10 @@ Usage::
     atap list                       # list registered algorithms
     atap demo [--seed 42] [--out runs/demo]   # phase two: offline end-to-end demo
     atap -v run ...                 # verbose (DEBUG-level process logs)
+    atap langfuse-eval --config cfg.yaml [--tags ...] [--since 24h] [--dry-run]
+                                    # external evaluation over a live Langfuse
+                                    # instance (pull -> pipeline -> score write-back)
+    atap langfuse-push --traces runs/demo/traces.jsonl [--tags corpus-x]  # seed a live instance
 
 Logging convention (atap.log): stdout carries only command results; process
 events go through the ``atap`` logger → stderr, run/compare/demo
@@ -212,6 +216,121 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_langfuse_eval(args: argparse.Namespace) -> int:
+    """External evaluation over a live Langfuse instance: pull -> pipeline -> scores.
+
+    Mapping knobs that have no natural CLI spelling (``outcome_from`` /
+    ``agent_keys``) live in the config's ``source`` block when it is a
+    ``langfuse_api`` source; CLI flags override the pull-window knobs.
+    """
+    from atap.core.config import load_config
+    from atap.io.langfuse_live import LangfuseAPISource, ScoreWriter
+    from atap.runtime import run_config
+
+    cfg = load_config(args.config)
+    reps = [s.name for s in cfg.stages.get("represent", [])]
+    if "canonical_events" not in reps:
+        log.error(
+            "the config must include represent/canonical_events: live traces arrive "
+            "as a raw span tree and only R0-flattening produces the events every "
+            "downstream stage reads"
+        )
+        return 1
+    if cfg.stages.get("recover") and not cfg.sandbox:
+        log.warning(
+            "recover is configured without a sandbox: reruns of live traces cannot "
+            "be re-executed/verified -- consider an analyze/classify/attribute-only "
+            "stack for external evaluation"
+        )
+    src_spec = dict(cfg.source) if cfg.source.get("type") == "langfuse_api" else {}
+    source = LangfuseAPISource(
+        base_url=args.base_url or src_spec.get("base_url"),
+        tags=(args.tags.split(",") if args.tags else src_spec.get("tags")),
+        since=args.since or src_spec.get("since"),
+        limit=(args.limit if args.limit is not None else src_spec.get("limit")),
+        outcome_from=src_spec.get("outcome_from"),
+        agent_keys=src_spec.get("agent_keys"),
+    )
+    traces = source.load()
+    n_fail = sum(0 if t.outcome.success else 1 for t in traces)
+    print(
+        f"langfuse: pulled {len(traces)} trace(s)"
+        + (f" (tags={source.tags})" if source.tags else "")
+        + (f" since={source.since}" if source.since else "")
+        + f"; outcome: failure={n_fail} success={len(traces) - n_fail}"
+    )
+    if not traces:
+        return 0
+
+    bundles, reports = run_config(cfg, args.out, trajectories=traces)
+    for i, r in enumerate(reports):
+        print(
+            f"  round{i}: traces={r.n_traces} failures={r.n_failures} "
+            f"attributed={r.n_attributed} reruns={r.n_reruns}(ok={r.n_rerun_success})"
+            + (f" errors={r.n_errors}" if r.n_errors else "")
+        )
+
+    # Batch identity on every written score: Langfuse scores are append-only,
+    # so repeated evaluations of one trace are indistinguishable without it.
+    # run_id = the --out dir name (unique per run by the fresh-dir contract).
+    llm_cfg = cfg.llm or {}
+    llm_label = llm_cfg.get("type", "")
+    if llm_cfg.get("model"):
+        llm_label = f"{llm_label}:{llm_cfg['model']}"
+    run_meta = {
+        "run_id": str(args.out).rstrip("/").rsplit("/", 1)[-1],
+        "run_name": cfg.run_name,
+        "llm": llm_label,
+        "seed": cfg.seed,
+    }
+    writer = ScoreWriter(source.client, dry_run=args.dry_run, run_meta=run_meta)
+    tally = {"written": 0, "dry-run": 0, "skipped": 0, "no-hypotheses": 0}
+    n_scores = 0
+    for b in bundles:
+        prior = source.scores_by_trace.get(b.trace_id)
+        if prior is None:
+            continue  # not a pulled trace (e.g. a closed-loop rerun trajectory)
+        decision, n = writer.write_bundle(
+            b, prior_scores=prior, force=args.force, emit=print
+        )
+        tally[decision] += 1
+        n_scores += n
+    label = " (dry-run, nothing written)" if args.dry_run else ""
+    print(
+        f"scores: {n_scores} written across {tally['written'] or tally['dry-run']} "
+        f"trace(s){label}; skipped(already scored)={tally['skipped']} "
+        f"no-hypotheses={tally['no-hypotheses']}"
+    )
+    n_errors = sum(r.n_errors for r in reports)
+    if n_errors:
+        print(f"ERROR: {n_errors} isolated algorithm failure(s) -- see {args.out}/run.log")
+        return 1
+    return 0
+
+
+def _cmd_langfuse_push(args: argparse.Namespace) -> int:
+    """Seed a live Langfuse instance with local JSONL trajectories (demo round-trip)."""
+    from atap.io.jsonl_store import JSONLTraceSource
+    from atap.io.langfuse_live import LangfuseClient, push_langfuse
+
+    traces = JSONLTraceSource(args.traces).load()
+    n_flattened = _ensure_flattened(traces)
+    if n_flattened:
+        log.info(
+            "push: flattened %d raw-span-only trace(s) via represent/"
+            "canonical_events before export", n_flattened,
+        )
+    client = LangfuseClient.from_env(args.base_url)
+    tags = args.tags.split(",") if args.tags else None
+    n_events = push_langfuse(traces, client, tags=tags)
+    label = f" (tags={tags})" if tags else ""
+    print(
+        f"langfuse: pushed {n_events} ingestion event(s) covering "
+        f"{len(traces)} trace(s){label}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="atap", description="Agent Trace Analysis Platform (ATAP)")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -254,6 +373,33 @@ def main(argv: list[str] | None = None) -> int:
     p_exp.add_argument("--format", required=True, choices=("langfuse", "otel"))
     p_exp.add_argument("--out", required=True, help="output JSON file")
 
+    p_lfe = sub.add_parser(
+        "langfuse-eval",
+        help="external evaluation: pull traces from a live Langfuse instance, run the "
+             "pipeline, write attribution results back as Scores",
+    )
+    p_lfe.add_argument("--config", required=True, help="pipeline config (recommend an analyze/classify/attribute stack)")
+    p_lfe.add_argument("--out", default="runs/langfuse-eval", help="run output directory (must be fresh per run)")
+    p_lfe.add_argument("--base-url", default=None,
+                       help="Langfuse base URL (default: LANGFUSE_BASE_URL / LANGFUSE_HOST env)")
+    p_lfe.add_argument("--tags", default=None, help="comma-separated trace tags (AND semantics, client-side filter)")
+    p_lfe.add_argument("--since", default=None, help="only traces newer than this: '24h'/'7d' or an ISO 8601 timestamp")
+    p_lfe.add_argument("--limit", type=int, default=None, help="maximum number of accepted traces")
+    p_lfe.add_argument("--dry-run", action="store_true", help="print the scores that would be written, send nothing")
+    p_lfe.add_argument("--force", action="store_true", help="re-evaluate traces that already carry an atap:* score")
+
+    p_lfp = sub.add_parser(
+        "langfuse-push",
+        help="seed a live Langfuse instance with local JSONL trajectories (v3 ingestion batch)",
+    )
+    p_lfp.add_argument("--traces", required=True, help="input trajectory JSONL (Trajectory.to_dict lines)")
+    p_lfp.add_argument("--base-url", default=None,
+                       help="Langfuse base URL (default: LANGFUSE_BASE_URL / LANGFUSE_HOST env)")
+    p_lfp.add_argument("--tags", default=None,
+                       help="comma-separated tags stamped on every pushed trace; pushed corpora carry "
+                            "no usable timestamps, so tags are the scoping handle for a later "
+                            "`langfuse-eval --tags ...` over exactly this batch")
+
     args = parser.parse_args(argv)
     setup_logging(verbose=args.verbose)
     handlers = {
@@ -264,6 +410,8 @@ def main(argv: list[str] | None = None) -> int:
         "corpus": _cmd_corpus,
         "taxonomy": _cmd_taxonomy,
         "export": _cmd_export,
+        "langfuse-eval": _cmd_langfuse_eval,
+        "langfuse-push": _cmd_langfuse_push,
     }
     try:
         return handlers[args.command](args)

@@ -2,6 +2,13 @@
 
 from atap.io.base import ArtifactStore, TraceSource, TraceStore
 from atap.io.langfuse import LangfuseTraceSource, export_langfuse
+from atap.io.langfuse_live import (
+    ATAP_SCORE_NAMES,
+    LangfuseAPISource,
+    LangfuseClient,
+    ScoreWriter,
+    push_langfuse,
+)
 from atap.io.jsonl_store import (
     JSONLArtifactStore,
     JSONLTraceSource,
@@ -24,4 +31,9 @@ __all__ = [
     "OTelTraceSource",
     "export_langfuse",
     "export_otel",
+    "ATAP_SCORE_NAMES",
+    "LangfuseAPISource",
+    "LangfuseClient",
+    "ScoreWriter",
+    "push_langfuse",
 ]
