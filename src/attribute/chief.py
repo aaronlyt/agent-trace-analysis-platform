@@ -155,7 +155,10 @@ _LOCALIZE_SYSTEM = (
 class ChiefAttributor(Attributor):
     stage = "attribute"
     name = "chief"
-    requires = (("represent", "hcg"),)   # consumes the hierarchical causal graph
+    requires = (
+        ("represent", "canonical_events"),   # oracle/localization calls view the R0 stream
+        ("represent", "hcg"),   # consumes the hierarchical causal graph
+    )
 
     def run_one(self, bundle, ctx) -> None:
         t = bundle.trajectory

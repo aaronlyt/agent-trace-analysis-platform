@@ -80,6 +80,7 @@ _SYSTEM = (
 class ClaimLedgerRepresenter(Representer):
     stage = "represent"
     name = "claim_ledger"
+    requires = (("represent", "canonical_events"),)   # consumes the flattened R0 event stream
 
     def run_one(self, bundle, ctx) -> None:
         if not bundle.trajectory.events:

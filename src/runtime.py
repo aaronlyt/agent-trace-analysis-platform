@@ -21,6 +21,29 @@ from atap.log import attach_run_log, get_logger
 
 log = get_logger("runtime")
 
+#: files whose presence marks a directory as carrying a previous run's
+#: evidence. traces.jsonl (the demo's input corpus, deterministically
+#: regenerable) is deliberately NOT among them.
+_EVIDENCE_MARKERS = ("run.log", "llm_calls.jsonl", "artifacts")
+
+
+def ensure_fresh_run_dir(run_dir: str | Path) -> None:
+    """Refuse a directory that already carries run evidence (review
+    2026-08-28: rerunning into it would truncate llm_calls.jsonl, reopen
+    run.log in "w" mode, overwrite same-name artifacts and collide rerun
+    trace-id counters -- destroying the first run's auditable record).
+    Compare already enforced this for its per-config subdirectories; run and
+    demo get the same contract here."""
+    run_dir = Path(run_dir)
+    if run_dir.exists() and any(
+        (run_dir / m).exists() for m in _EVIDENCE_MARKERS
+    ):
+        raise ValueError(
+            f"run directory already contains a previous run's evidence: "
+            f"{run_dir} (rerunning would truncate/overwrite it; use a new "
+            f"--out directory)"
+        )
+
 
 def build_pipeline(cfg: PipelineConfig) -> Pipeline:
     """Config → Pipeline (validated against the registry first; errors list the available algorithms)."""
@@ -84,6 +107,7 @@ def run_config(
     inner client).
     """
     run_dir = Path(run_dir)
+    ensure_fresh_run_dir(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     attach_run_log(run_dir / "run.log")
     if trajectories is None:

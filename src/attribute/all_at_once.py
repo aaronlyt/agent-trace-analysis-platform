@@ -76,6 +76,7 @@ _FEW_SHOT = (
 class AllAtOnceAttributor(Attributor):
     stage = "attribute"
     name = "all_at_once"
+    requires = (("represent", "canonical_events"),)   # attributes over the (SSF-folded) R0 stream
 
     def run_one(self, bundle, ctx) -> None:
         if not bundle.trajectory.events:

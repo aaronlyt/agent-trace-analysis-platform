@@ -51,26 +51,27 @@ def test_fake_client_call_log_records_error(tmp_path):
     assert rec["ok"] is False and "LLMError" in rec["error"]
 
 
-def test_call_log_attach_truncates_previous_run(tmp_path):
-    """Re-attaching the same path restarts the audit file (one attach per
-    run: runtime.run_config attaches <run_dir>/llm_calls.jsonl exactly once
-    at run start, so rerunning into the same run directory must not append
-    a second run's calls -- previously 26 -> 52 -> 104 lines across demo
-    reruns, silently inflating per-run statistics)."""
+def test_call_log_attach_never_truncates_previous_run(tmp_path):
+    """Attaching the same path creates-or-appends, never truncates (review
+    2026-08-28 evidence-immutability fix): llm_calls.jsonl is audit evidence
+    and directory reuse is refused by runtime.ensure_fresh_run_dir, so a
+    second attach reaching the same path must only ever add records --
+    the old truncate-on-attach destroyed the first run's calls whenever the
+    directory guard was bypassed (e.g. library-mode callers)."""
     path = tmp_path / "llm_calls.jsonl"
     c1 = FakeLLMClient(responses=["a"])
     c1.attach_call_log(path)
     c1.complete([{"role": "user", "content": "q1"}], tag="run1")
     c2 = FakeLLMClient(responses=["b", "b"])
-    c2.attach_call_log(path)   # a fresh run into the same directory
+    c2.attach_call_log(path)   # a second attach to the same path
     c2.complete([{"role": "user", "content": "q2"}], tag="run2a")
     c2.complete([{"role": "user", "content": "q3"}], tag="run2b")
     tags = [
         json.loads(line)["tag"]
         for line in path.read_text(encoding="utf-8").splitlines()
     ]
-    assert tags == ["run2a", "run2b"], (
-        f"the audit must contain only the latest run's calls, got {tags}"
+    assert tags == ["run1", "run2a", "run2b"], (
+        f"the audit must keep earlier runs' calls and append, got {tags}"
     )
 
 

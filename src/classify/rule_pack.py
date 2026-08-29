@@ -80,6 +80,7 @@ _VERIFIER_REJECT_RE = re.compile(
 class RulePackClassifier(Classifier):
     stage = "classify"
     name = "rule_pack"
+    requires = (("represent", "canonical_events"),)   # predicates run over the R0 event stream
 
     def run_one(self, bundle, ctx) -> None:
         events = bundle.trajectory.events

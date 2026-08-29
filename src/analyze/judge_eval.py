@@ -92,6 +92,7 @@ _FEW_SHOT = (
 class JudgeEvalAnalyzer(Analyzer):
     stage = "analyze"
     name = "judge_eval"
+    requires = (("represent", "canonical_events"),)   # judges the flattened R0 event stream
 
     def run_one(self, bundle, ctx) -> None:
         if not bundle.trajectory.events:

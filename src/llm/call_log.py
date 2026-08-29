@@ -33,13 +33,12 @@ class CallLogMixin:
     def attach_call_log(self, path: str | Path) -> None:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        # truncate: one attach per run (runtime.run_config attaches
-        # <run_dir>/llm_calls.jsonl exactly once at run start), so a rerun
-        # into the same directory restarts the audit instead of appending a
-        # second run's calls on top of the first -- previously "26 -> 52 ->
-        # 104" across three demo reruns, silently inflating any per-run
-        # statistics read from this file (docs/realtest_audit.py).
-        p.write_text("", encoding="utf-8")
+        # create-or-append, never truncate: the run-directory immutability
+        # guard (runtime.ensure_fresh_run_dir) already refuses reusing a
+        # directory that carries a previous run's llm_calls.jsonl, so
+        # truncating here could only ever destroy evidence (the old
+        # truncate-on-attach silently dropped the first run's calls when the
+        # guard was bypassed)
         self._call_log_path = p
 
     def _emit_call_record(self, record: dict[str, Any]) -> None:

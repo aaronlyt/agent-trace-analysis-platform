@@ -155,7 +155,10 @@ _T_SYSTEM = (
 class ClaimAuditAttributor(Attributor):
     stage = "attribute"
     name = "claim_audit"
-    requires = (("represent", "claim_ledger"),)   # audits the R3 ledger
+    requires = (
+        ("represent", "canonical_events"),   # audit calls view the R0 stream
+        ("represent", "claim_ledger"),   # audits the R3 ledger
+    )
 
     def run_one(self, bundle, ctx) -> None:
         t = bundle.trajectory

@@ -100,7 +100,10 @@ _DRILL_SYSTEM = (
 class TreeDiagnosisAttributor(Attributor):
     stage = "attribute"
     name = "tree_diagnosis"
-    requires = (("represent", "hierarchy_tree"),)   # drills down the R4 tree
+    requires = (
+        ("represent", "canonical_events"),   # diagnosis calls view the R0 stream
+        ("represent", "hierarchy_tree"),   # drills down the R4 tree
+    )
 
     def run_one(self, bundle, ctx) -> None:
         t = bundle.trajectory

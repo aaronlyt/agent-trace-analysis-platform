@@ -100,16 +100,17 @@ class Pipeline:
                     continue
                 algo_name = getattr(algo, "name", type(algo).__name__)
                 t0 = time.time()
-                # per-algorithm error isolation (review 2026-08-27 P1): one
-                # crashing algorithm (e.g. binary_search's LLMError when the
-                # judge answers neither upper nor lower) must not discard the
-                # whole run's completed work. Granularity is the algorithm,
-                # not the bundle: cross-trajectory algorithms (sbfl & co.)
-                # own an internal run_corpus loop the pipeline cannot see
-                # into; a class of missing-dependency crashes is instead
-                # caught at config time via StageAlgorithm.requires.
+                # two isolation granularities (review 2026-08-28): the default
+                # run_corpus isolates per trajectory (a crashing bundle gets
+                # an error artifact, its siblings are still processed, the
+                # failures come back as (trace_id, error) pairs); cross-
+                # trajectory algorithms (sbfl, drift_detect, ...) own an
+                # internal run_corpus the pipeline cannot see into, so for
+                # them isolation stays at the algorithm level. A class of
+                # missing-dependency crashes is instead caught at config time
+                # via StageAlgorithm.requires.
                 try:
-                    algo.run_corpus(bundles, ctx)
+                    bundle_failures = algo.run_corpus(bundles, ctx)
                 except Exception as e:  # noqa: BLE001 - isolation is the point
                     report.n_errors += 1
                     err = f"{type(e).__name__}: {e}"
@@ -125,10 +126,27 @@ class Pipeline:
                                 "isolated": True,
                             })
                 else:
-                    report.stage_log.append(
-                        f"{stage}/{algo_name} "
-                        f"-> {len(bundles)} bundles in {time.time() - t0:.3f}s"
-                    )
+                    if bundle_failures:
+                        # bundle-level isolation: the algorithm itself
+                        # survived; these trajectories did not. They must
+                        # reach n_errors or a partially crashed algorithm
+                        # would silently read as success (cli exits 1 on
+                        # n_errors > 0).
+                        report.n_errors += len(bundle_failures)
+                        summary = "; ".join(
+                            f"{tid}: {err[:120]}" for tid, err in bundle_failures
+                        )
+                        report.stage_log.append(
+                            f"{stage}/{algo_name} -> "
+                            f"{len(bundles) - len(bundle_failures)}/{len(bundles)} "
+                            f"bundles in {time.time() - t0:.3f}s; isolated "
+                            f"{len(bundle_failures)} bundle failure(s): {summary}"
+                        )
+                    else:
+                        report.stage_log.append(
+                            f"{stage}/{algo_name} "
+                            f"-> {len(bundles)} bundles in {time.time() - t0:.3f}s"
+                        )
                 # incremental persistence: flush after every algorithm
                 # attempt (success or failure), so a later crash never loses
                 # earlier stages' artifacts (save_artifact is an idempotent

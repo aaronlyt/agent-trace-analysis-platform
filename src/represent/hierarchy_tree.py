@@ -85,6 +85,7 @@ def _summary(ev) -> str:
 class HierarchyTreeRepresenter(Representer):
     stage = "represent"
     name = "hierarchy_tree"
+    requires = (("represent", "canonical_events"),)   # consumes the flattened R0 event stream
 
     #: Actions that only read the environment without changing task state -> exploration (sibling nodes) [adaptation]
     DEFAULT_EXPLORATION_ACTIONS = ("search", "read_doc")

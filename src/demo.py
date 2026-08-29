@@ -20,11 +20,14 @@ log = get_logger("demo")
 
 def run_demo(seed: int = 7, out: str = "runs/demo") -> None:
     from atap.core.config import config_from_dict
-    from atap.runtime import run_config
+    from atap.runtime import ensure_fresh_run_dir, run_config
     from atap.sandbox import ToySandbox
 
     log.info("demo start: seed=%s out=%s", seed, out)
     out_dir = Path(out)
+    # guard before writing anything: a second demo into the same directory
+    # must refuse instead of clobbering the first run's evidence
+    ensure_fresh_run_dir(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     traces = ToySandbox().generate_population(seed)
     traces_jsonl = out_dir / "traces.jsonl"

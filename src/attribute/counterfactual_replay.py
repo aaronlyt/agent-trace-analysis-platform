@@ -86,6 +86,10 @@ _SYSTEM = (
 class CounterfactualReplayAttributor(Attributor):
     stage = "attribute"
     name = "counterfactual_replay"
+    requires = (
+        ("represent", "canonical_events"),   # replays the R0 event stream
+        ("attribute", "*"),   # final-reviews hypotheses from any attributor before it
+    )
 
     #: paper parameters: candidates ≤3, window k=3
     MAX_CANDIDATES = 3

@@ -70,10 +70,30 @@ class StageAlgorithm(ABC):
         algorithms are responsible for populating ``trajectory.events``.
         """
 
-    def run_corpus(self, bundles: list["TrajectoryBundle"], ctx: "RunContext") -> None:
-        """Cross-trajectory aggregation scope. Default implementation = run_one per trajectory."""
+    def run_corpus(
+        self, bundles: list["TrajectoryBundle"], ctx: "RunContext"
+    ) -> list[tuple[str, str]]:
+        """Cross-trajectory aggregation scope. Default implementation = run_one
+        per trajectory, with per-trajectory error isolation (review
+        2026-08-28): one crashing trajectory no longer fails its siblings --
+        the failure is recorded as an error artifact on that bundle only and
+        returned as ``(trace_id, error)`` pairs, which Pipeline folds into
+        n_errors (never a silent success). Cross-trajectory algorithms that
+        override run_corpus keep the pipeline-level algorithm isolation
+        instead and may return None."""
+        failures: list[tuple[str, str]] = []
         for bundle in bundles:
-            self.run_one(bundle, ctx)
+            try:
+                self.run_one(bundle, ctx)
+            except Exception as e:  # noqa: BLE001 - isolation is the point
+                err = f"{type(e).__name__}: {e}"
+                failures.append((bundle.trace_id, err))
+                bundle.put(self.stage, self.name, {
+                    "status": "error",
+                    "error": err[:500],
+                    "isolated": True,
+                })
+        return failures
 
     # -- description ----------------------------------------------------------
 

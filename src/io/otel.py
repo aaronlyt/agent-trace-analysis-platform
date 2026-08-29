@@ -21,7 +21,9 @@ trace_id/ev.id are readable strings ('q-...'/'e003') that do not satisfy
 hex, so the export side derives deterministic hex ids via sha256 and the
 original ids survive via ``atap.trace_id``/``atap.ev_id`` (the import side
 restores the original trace_id; roundtrip fidelity) [adaptation].
-Timestamps are synthetic (end=ts+1s; R0 ts itself is a copy of the ordinal).
+Timestamps: startTimeUnixNano carries the R0 ``ts`` (seconds → integer
+nanoseconds on export; the import side reads it back so ts survives the
+roundtrip); endTimeUnixNano is synthetic (ts+1s) and is not read back.
 
 Mapping (R0 ↔ OTel span; unmapped attributes go wholesale into ``atap.*``
 custom attributes to prevent loss):
@@ -234,6 +236,18 @@ class OTelTraceSource:
                         refs = json.loads(a["atap.refs"])
                     except (json.JSONDecodeError, TypeError):
                         pass
+                # startTimeUnixNano -> node ts (the export side wrote
+                # int(ev.ts * 1e9); without this read-back every ts would
+                # collapse to the flattened ordinal on re-import). A missing
+                # or unparsable value leaves ts unset and canonical_events
+                # falls back to the sequence number, as before.
+                ts: float | None = None
+                raw_ts = span.get("startTimeUnixNano")
+                if raw_ts is not None:
+                    try:
+                        ts = int(raw_ts) / 1e9
+                    except (TypeError, ValueError):
+                        ts = None
                 nodes[span["spanId"]] = {
                     "id": span["spanId"],
                     "logical": span.get("name") or kind,
@@ -243,6 +257,7 @@ class OTelTraceSource:
                     "payload": payload,
                     "refs": [],
                     "phase": a.get("atap.phase") or None,
+                    "ts": ts,
                     "children": [],
                     "_parent": span.get("parentSpanId") or None,
                     "_refs": refs,

@@ -159,6 +159,7 @@ def _parse_half(text: str) -> tuple[str, bool]:
 class BinarySearchAttributor(Attributor):
     stage = "attribute"
     name = "binary_search"
+    requires = (("represent", "canonical_events"),)   # bisection walks the R0 event stream
 
     def run_one(self, bundle, ctx) -> None:
         events = bundle.trajectory.events

@@ -220,13 +220,18 @@ def test_requires_validated_at_config_time():
             {"stages": {"classify": ["inducer", "mast_judge"]}}
         ))
     # wildcard stage dependency: recoverer without any attributor
+    # (represent/canonical_events is present so the earlier judge_eval
+    # requires -- added alongside the requires batch -- stays satisfied and
+    # the wildcard check is what fires)
     with pytest.raises(ConfigError, match="targeted_rerun.*at least one.*attribute"):
         validate_against_registry(config_from_dict(
-            {"stages": {"analyze": ["judge_eval"], "recover": ["targeted_rerun"]}}
+            {"stages": {"represent": ["canonical_events"],
+                        "analyze": ["judge_eval"], "recover": ["targeted_rerun"]}}
         ))
     # satisfied dependencies pass (mast_judge before inducer; attributor present)
     validate_against_registry(config_from_dict(
-        {"stages": {"classify": ["mast_judge", "inducer"],
+        {"stages": {"represent": ["canonical_events"],
+                    "classify": ["mast_judge", "inducer"],
                     "attribute": ["all_at_once"], "recover": ["feedback_injection"]}}
     ))
 

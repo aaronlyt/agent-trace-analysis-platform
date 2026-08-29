@@ -88,6 +88,7 @@ def _parse_docs(content: str) -> list[str]:
 class RGUGAttributor(Attributor):
     stage = "attribute"
     name = "rg_ug"
+    requires = (("represent", "canonical_events"),)   # episode utility is computed over R0 events
 
     def run_one(self, bundle, ctx) -> None:
         t = bundle.trajectory

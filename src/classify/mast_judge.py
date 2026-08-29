@@ -134,6 +134,7 @@ def _load_extra_modes(path: str) -> tuple[dict[str, dict[str, str]], list[dict[s
 class MastJudgeClassifier(Classifier):
     stage = "classify"
     name = "mast_judge"
+    requires = (("represent", "canonical_events"),)   # labels the flattened R0 event stream
 
     def __init__(self, **params) -> None:
         super().__init__(**params)

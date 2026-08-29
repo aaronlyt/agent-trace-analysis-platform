@@ -75,6 +75,7 @@ from atap.represent.base import Representer
 class IDGRepresenter(Representer):
     stage = "represent"
     name = "idg"
+    requires = (("represent", "canonical_events"),)   # consumes the flattened R0 event stream
 
     def run_one(self, bundle, ctx) -> None:
         events = bundle.trajectory.events

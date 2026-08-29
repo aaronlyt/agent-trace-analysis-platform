@@ -251,6 +251,7 @@ _CLASSIFY_SYSTEM = (
 class DoVerRecoverer(Recoverer):
     stage = "recover"
     name = "dover"
+    requires = (("represent", "canonical_events"),)   # segments/intervenes the R0 event stream
 
     def run_one(self, bundle, ctx) -> None:
         t = bundle.trajectory

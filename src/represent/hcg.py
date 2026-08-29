@@ -73,6 +73,7 @@ _OTAR_KIND = {
 class HCGRepresenter(Representer):
     stage = "represent"
     name = "hcg"
+    requires = (("represent", "canonical_events"),)   # consumes the flattened R0 event stream
 
     def run_one(self, bundle, ctx) -> None:
         events = bundle.trajectory.events
