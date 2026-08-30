@@ -36,41 +36,16 @@ atap demo    # offline end-to-end pipeline: FakeLLM judge, deterministic, zero n
 
 </div>
 
-Agent Trace Analysis Platform (**atap**) is not another tracing platform — it is the
-**attribution & recovery layer that sits on top of the observability stack you already
-run**: a live Langfuse instance, or plain JSONL / OTel / Phoenix exports.
+Agent Trace Analysis Platform (**atap**) is the **attribution & recovery layer on top
+of your observability stack**: it pulls traces from Langfuse (or JSONL / OTel /
+Phoenix exports), locates the responsible agent and the decisive step of every
+failure, and writes the verdicts back as Langfuse scores.
 
-Pulled traces are flattened into one canonical event stream and run through the
-six-stage pipeline shared by recent agent error-analysis research — **representation →
-analysis/evaluation → error classification → failure attribution → recovery**.
-
-The verdicts go back where your team already looks:
-
-- **on the trace** — a Langfuse score carrying the root-cause code and confidence;
-- **on the responsible observation** — a blamed-step marker;
-- **in score metadata** — the full hypothesis plus run-batch identity.
-
-The pipeline is **transformers-style pluggable**: one algorithm per module, every
-algorithm inherits a stage base class, registers itself in a `Registry`, and composes
-into pipelines via YAML. Algorithms talk to each other only through artifacts — never
-through imports (enforced by import-invariant tests).
-
-- **24 algorithms across 5 stages**, each faithful to a specific paper — full table in
-  [docs/algorithms.md](docs/algorithms.md)
-- **Deterministic offline mode** — FakeLLM pseudo-judge + toy sandbox with injected faults,
-  fully reproducible, zero network
-- **Real LLMs** through any OpenAI-compatible API, with a per-call audit log
-- **One attribution contract** — every localizer (rules, judge, graph, replay) emits the same
-  `Hypothesis` structure that recovery consumes
-- **Closed loop** — recovered reruns automatically re-enter analysis for verification
-  (`closed_loop: true`)
-- **Ingest & export** — Langfuse v3 ingestion / OTel GenAI semantic conventions, with
-  field-level roundtrip equivalence and ground-truth leak guards on export
-- **Live external evaluation** — `atap langfuse-eval` pulls traces from a running
-  Langfuse instance and writes attribution results back as Scores on the
-  original traces (root-cause + confidence on the trace, a blamed-step marker
-  on the responsible observation); re-evaluations are batch-distinguishable via
-  score metadata (`run_id` / `llm` / full hypothesis)
+- **24 pluggable algorithms, 5 stages** — one module each, YAML-composed, artifact-coupled ([docs/algorithms.md](docs/algorithms.md))
+- **Deterministic offline mode** — FakeLLM judge + fault-injected sandbox, zero network
+- **Real LLMs** — any OpenAI-compatible API, per-call audit log
+- **Langfuse integration** — `atap langfuse-eval` writes root-cause scores + blamed-step markers back onto your traces ([below](#integration-with-langfuse))
+- **Closed loop** — one shared `Hypothesis` contract; recovered reruns re-enter analysis for verification
 
 > **Disclaimer** — this project is a learning- and research-oriented implementation of
 > the agent error-analysis pipeline. Validation is **limited**: acceptance numbers come
@@ -231,30 +206,6 @@ atap run --config configs/pipeline_llm.yaml
 (smoke variants for specific models) configurations used to produce the real-model
 numbers below.
 
-### External evaluation: write attribution back to Langfuse
-
-atap can act as an **external evaluation pipeline** over a live Langfuse
-deployment: pull traces by tag/time window, run your analysis/classify/attribute
-stack on them, and write the results back as Scores on the original traces —
-the failure attribution shows up directly in your own Langfuse UI.
-
-```bash
-pip install -e ".[llm,langfuse]"
-export LANGFUSE_BASE_URL=... LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
-atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
-    --tags production --since 24h --dry-run    # dry-run first; drop the flag to write
-```
-
-`--dry-run` prints the scores without sending anything; traces whose earlier
-batch completed are skipped (the trace-level `atap:root-cause` score is
-written last and doubles as the completion marker, so an interrupted batch is
-simply re-evaluated; `--force` re-evaluates regardless).
-Credentials come from the environment only. A self-hosted demo instance and the
-full round-trip walkthrough (seed with `atap langfuse-push`, evaluate, watch the
-scores appear) live in
-[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) and
-`docker-compose.langfuse.yml`.
-
 ### Auditing and logs
 
 Every `run` / `demo` / `compare` writes two records under `runs/<name>/`:
@@ -269,6 +220,34 @@ python -c "import json,collections; \
 recs=[json.loads(l) for l in open('runs/demo/llm_calls.jsonl')]; \
 print(len(recs), dict(collections.Counter(r['tag'] for r in recs)))"
 ```
+
+## Integration with Langfuse
+
+atap works as an **external evaluation pipeline** on a live Langfuse deployment:
+pull traces by tag/time window, run your analysis/classify/attribute stack on them,
+and write the results back — attribution shows up directly in your own Langfuse UI.
+
+| Score | Placed on | Carries |
+|---|---|---|
+| `atap:root-cause` | the trace | root-cause code (categorical) |
+| `atap:confidence` | the trace | top-hypothesis confidence (numeric) |
+| `atap:blamed-step` | the responsible observation | agent @ step + root cause |
+| score `metadata` | every score | full `Hypothesis` + run identity (`run_id` / `llm`) — evaluation batches stay distinguishable |
+
+```bash
+pip install -e ".[llm,langfuse]"
+export LANGFUSE_BASE_URL=... LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
+atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
+    --tags production --since 24h --dry-run    # dry-run first; drop the flag to write
+```
+
+`--dry-run` prints the scores without sending anything; traces whose earlier batch
+completed are skipped (the trace-level `atap:root-cause` is written last and doubles
+as the completion marker, so an interrupted batch is simply re-evaluated; `--force`
+re-evaluates regardless). Credentials come from the environment only. Seeding a demo
+instance (`atap langfuse-push`) and the full round-trip walkthrough live in
+[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) and
+`docker-compose.langfuse.yml`.
 
 ## Configuration — the pluggable core
 

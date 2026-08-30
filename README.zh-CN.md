@@ -32,31 +32,15 @@ atap demo    # 离线端到端流水线：FakeLLM 伪判官、确定性、零网
 
 </div>
 
-Agent Trace Analysis Platform（**atap**）不是又一个追踪平台——它是**架在你已有
-可观测性栈之上的归因与恢复层**：数据来自运行中的 Langfuse 实例，或普通的
-JSONL / OTel / Phoenix 导出。
+Agent Trace Analysis Platform（**atap**）是**架在你现有可观测性栈之上的归因与
+恢复层**：从 Langfuse（或 JSONL / OTel / Phoenix 导出）拉取轨迹，定位每条失败的
+**责任 agent 与致因步**，把结论作为 Langfuse score 写回原处。
 
-拉取的轨迹被拍平成统一事件流，跑近年 agent 错误分析研究通行的六环节
-流水线——**表征 → 分析评测 → 错误分类 → 失败归因 → 恢复闭环**。
-
-结论写回团队本来就看得见的地方：
-
-- **trace 上**——Langfuse score 携带根因码与置信度；
-- **被归因的 observation 上**——blamed-step 标记；
-- **score metadata 里**——完整假设与运行批次标识。
-
-流水线是 **transformers 式可插拔**：每个算法一个模块、继承阶段基类、注册进
-Registry、YAML 配置组合 pipeline；算法之间只通过产物（artifact）解耦，不互相
-import（由 import 图不变量测试强制）。
-
-- **5 个阶段 24 个算法**，每个都忠实对应一篇文献——完整表格见
-  [docs/算法清单.md](docs/算法清单.md)（[English](docs/algorithms.md)）
-- **确定性离线模式** —— FakeLLM 伪判官 + 注入故障的玩具沙盒，完全可复现、零网络
-- **真实 LLM** —— 任意 OpenAI 兼容 API，逐调用审计日志
-- **统一归因契约** —— 规则/判官/图/重放等一切定位算法产出同一个 `Hypothesis` 结构，恢复阶段只消费它
-- **恢复闭环** —— 恢复产物自动回到分析阶段验证（`closed_loop: true`）
-- **采集适配** —— Langfuse v3 ingestion / OTel GenAI 语义约定导入导出，roundtrip 字段级等价，导出侧防 GT 泄漏
-- **活实例外部评估** —— `atap langfuse-eval` 从运行中的 Langfuse 拉取 trace，把归因结果作为 Score 写回原 trace（trace 级根因码 + 置信度，被归因步骤的 observation 上打 blamed-step 标记）；重复评估可按 score metadata 区分批次（`run_id` / `llm` / 完整假设字段）
+- **24 个可插拔算法、5 个阶段**——一个算法一个模块，YAML 组合，产物解耦（[docs/算法清单.md](docs/算法清单.md)）
+- **确定性离线模式**——FakeLLM 判官 + 注入故障沙盒，零网络
+- **真实 LLM**——任意 OpenAI 兼容 API，逐调用审计
+- **Langfuse 集成**——`atap langfuse-eval` 把根因 score 与 blamed-step 标记写回你的 trace（[见下文](#与-langfuse-集成)）
+- **闭环**——统一 `Hypothesis` 契约，恢复重跑自动回到分析验证
 
 > **声明** —— 本项目是对 agent 错误分析流程的学习/研究性质实现。**测试有限**：
 > 验收数字来自构造故障的玩具沙盒语料与少量真实模型轮次（见[docs/validation.md](docs/validation.md)），
@@ -207,26 +191,6 @@ atap run --config configs/pipeline_llm.yaml
 `configs/` 中另有产出下述真实模型数字所用的 `final_*`（上线前全量测试八档）与
 `realtest_*`（特定模型冒烟档）配置。
 
-### 外部评估：把归因结果写回 Langfuse
-
-atap 可以作为**活 Langfuse 实例的外部评估管线**：按标签/时间窗拉取 trace，
-跑你的分析/分类/归因栈，再把结果作为 Score 写回原 trace——失败归因直接出现在
-你自己的 Langfuse 面板上。
-
-```bash
-pip install -e ".[llm,langfuse]"
-export LANGFUSE_BASE_URL=... LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
-atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
-    --tags production --since 24h --dry-run    # 先空跑确认，去掉该旗标即真写
-```
-
-`--dry-run` 只打印将写入的 score、不发任何请求；此前批次已完整评估的 trace
-自动跳过（trace 级 `atap:root-cause` 最后写入、充当完成标记，被打断的半批次
-下次自动重评；`--force` 无条件重评）。凭据只从环境变量读取。自建演示实例与
-完整 round-trip 演示（`atap langfuse-push` 播种 → 评估 → 面板查看 score）见
-[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) 与
-`docker-compose.langfuse.yml`。
-
 ### 日志与调用审计
 
 每次 `run / demo / compare` 在 `runs/<name>/` 下自动落两份记录：
@@ -241,6 +205,31 @@ python -c "import json,collections; \
 recs=[json.loads(l) for l in open('runs/demo/llm_calls.jsonl')]; \
 print(len(recs), dict(collections.Counter(r['tag'] for r in recs)))"
 ```
+
+## 与 Langfuse 集成
+
+atap 可以作为**活 Langfuse 实例的外部评估管线**：按标签/时间窗拉取 trace，跑你的
+分析/分类/归因栈，把结果写回原处——失败归因直接出现在你自己的 Langfuse 面板上。
+
+| Score | 落点 | 内容 |
+|---|---|---|
+| `atap:root-cause` | trace | 根因码（categorical） |
+| `atap:confidence` | trace | 置信度（numeric） |
+| `atap:blamed-step` | 被归因的 observation | agent @ step + 根因 |
+| score `metadata` | 每条 score | 完整 `Hypothesis` + 批次标识（`run_id` / `llm`），多次评估可区分 |
+
+```bash
+pip install -e ".[llm,langfuse]"
+export LANGFUSE_BASE_URL=... LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
+atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
+    --tags production --since 24h --dry-run    # 先空跑确认，去掉该旗标即真写
+```
+
+`--dry-run` 只打印不发请求；此前批次已完整评估的 trace 自动跳过（trace 级
+`atap:root-cause` 最后写入、充当完成标记，被打断的半批次下次自动重评；`--force`
+无条件重评）。凭据只从环境变量读取。自建演示实例（`atap langfuse-push` 播种）与
+完整 round-trip 见 [docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) 和
+`docker-compose.langfuse.yml`。
 
 ## 配置组合 —— 可插拔的核心
 
