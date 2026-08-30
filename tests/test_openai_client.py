@@ -97,3 +97,29 @@ def test_non_param_400_is_not_a_fallback_trigger(monkeypatch):
     assert c._legacy_max_tokens is False
     # every attempt still used the modern parameter
     assert all("max_completion_tokens" in kw for kw in calls)
+
+
+def test_extra_body_forwarded_on_every_request(monkeypatch):
+    """Provider-specific fields (e.g. DeepSeek ``thinking: {type: disabled}``)
+    ride along on every create call -- including the legacy max_tokens
+    fallback branch -- and stay absent when not configured."""
+    eb = {"thinking": {"type": "disabled"}}
+    c = _client(monkeypatch, extra_body=eb)
+    calls: list[dict] = []
+    c._client = _fake_transport(calls, fail_on_max_completion=False)
+    c.complete([{"role": "user", "content": "hi"}], tag="t")
+    assert calls[0]["extra_body"] == eb
+
+    # legacy fallback branch keeps forwarding it too
+    c2 = _client(monkeypatch, extra_body=eb)
+    calls2: list[dict] = []
+    c2._client = _fake_transport(calls2, fail_on_max_completion=True)
+    c2.complete([{"role": "user", "content": "hi"}], tag="t")
+    assert all(kw["extra_body"] == eb for kw in calls2)
+
+    # default: the kwarg is not sent at all
+    c3 = _client(monkeypatch)
+    calls3: list[dict] = []
+    c3._client = _fake_transport(calls3, fail_on_max_completion=False)
+    c3.complete([{"role": "user", "content": "hi"}], tag="t")
+    assert "extra_body" not in calls3[0]

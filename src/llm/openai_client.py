@@ -52,7 +52,13 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         max_retries: int = 5,
         retry_base_delay: float = 4.0,
         request_interval: float = 1.5,
+        extra_body: dict | None = None,
     ) -> None:
+        """``extra_body`` forwards provider-specific, non-OpenAI-standard
+        request fields verbatim to chat.completions.create -- e.g. DeepSeek's
+        ``thinking: {type: disabled}`` toggle or ``reasoning_effort`` (yaml:
+        ``llm: {type: openai, model: ..., extra_body: {thinking: {type:
+        disabled}}}``)."""
         base_url = os.environ.get(base_url_env, "")
         api_key = os.environ.get(api_key_env, "")
         if not api_key:
@@ -72,6 +78,7 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self.request_interval = request_interval
+        self.extra_body = dict(extra_body) if extra_body else None
         self._last_call_ts = 0.0
         self.calls: list[dict] = []
         self.retries: list[dict] = []
@@ -119,8 +126,9 @@ class OpenAICompatibleLLMClient(CallLogMixin):
         sticks to it for the rest of the run (older OpenAI-compatible
         backends)."""
         self.http_requests += 1
-        # getattr: partially-constructed clients (tests build them via
-        # __new__ and list attributes by hand) must not crash on this flag
+        # getattr guards: partially-constructed clients (tests build them via
+        # __new__ and list attributes by hand) must not crash on these flags
+        extra = {"extra_body": eb} if (eb := getattr(self, "extra_body", None)) else {}
         if not getattr(self, "_legacy_max_tokens", False):
             try:
                 return self._client.chat.completions.create(
@@ -128,6 +136,7 @@ class OpenAICompatibleLLMClient(CallLogMixin):
                     messages=payload_messages,  # type: ignore[arg-type]
                     temperature=self.temperature,
                     max_completion_tokens=self.max_completion_tokens,
+                    **extra,
                 )
             except Exception as e:
                 if not self._unsupported_max_completion_param(e):
@@ -144,6 +153,7 @@ class OpenAICompatibleLLMClient(CallLogMixin):
             messages=payload_messages,  # type: ignore[arg-type]
             temperature=self.temperature,
             max_tokens=self.max_completion_tokens,
+            **extra,
         )
 
     def _unsupported_max_completion_param(self, e: Exception) -> bool:
