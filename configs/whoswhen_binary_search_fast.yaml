@@ -2,14 +2,15 @@
 # Same trajectory set as whoswhen_all_at_once.yaml; a distinct run_name so
 # `atap compare` writes both runs side by side. Credentials from the env
 # (OPENAI_API_KEY / OPENAI_BASE_URL); only `model` is set here.
-run_name: whoswhen-binary-search
+run_name: whoswhen-binary-search-nothink
 seed: 7
 source:
   type: jsonl
   path: data/whoswhen/traces.jsonl
 llm:
   type: openai
-  model: deepseek-v4-flash          # set to your provider's model id
+  model: deepseek-v4-flash
+  extra_body: {thinking: {type: disabled}}
 stages:
   represent:
     - canonical_events
