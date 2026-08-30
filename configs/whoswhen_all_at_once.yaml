@@ -1,0 +1,17 @@
+# Who&When failure attribution -- All-at-Once (single-pass judge).
+# The gold answer is NOT fed to the judge (matches all_at_once.py's Without-GT basis).
+# Credentials come from the environment: OPENAI_API_KEY (+ OPENAI_BASE_URL for an
+# OpenAI-compatible provider such as DeepSeek). Only `model` is set here.
+run_name: whoswhen-all-at-once
+seed: 7
+source:
+  type: jsonl
+  path: data/whoswhen/traces.jsonl
+llm:
+  type: openai
+  model: deepseek-chat          # set to your provider's model id
+stages:
+  represent:
+    - canonical_events
+  attribute:
+    - all_at_once

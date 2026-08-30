@@ -1,0 +1,17 @@
+# Who&When failure attribution -- Binary Search step localization.
+# Same trajectory set as whoswhen_all_at_once.yaml; a distinct run_name so
+# `atap compare` writes both runs side by side. Credentials from the env
+# (OPENAI_API_KEY / OPENAI_BASE_URL); only `model` is set here.
+run_name: whoswhen-binary-search
+seed: 7
+source:
+  type: jsonl
+  path: data/whoswhen/traces.jsonl
+llm:
+  type: openai
+  model: deepseek-chat          # set to your provider's model id
+stages:
+  represent:
+    - canonical_events
+  attribute:
+    - binary_search
