@@ -2,7 +2,7 @@
 
 # Agent Trace Analysis Platform（atap）
 
-**架在你现有 Agent 可观测性栈之上的归因与恢复层 —— 定位、解释并修复 LLM Agent 失败，把结论作为 Score 写回原处**
+**架在你现有 Agent 可观测性栈（如 Langfuse）之上的归因与恢复层 —— 定位、解释并修复 LLM Agent 失败，把结论作为 Score 写回原处**
 
 [![CI](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
 [![Coverage](https://raw.githubusercontent.com/aaronlyt/agent-trace-analysis-platform/badges/coverage.svg)](https://github.com/aaronlyt/agent-trace-analysis-platform/actions/workflows/ci.yml)
@@ -26,25 +26,31 @@ atap demo    # 离线端到端流水线：FakeLLM 伪判官、确定性、零网
 
 <sub><b>阶段与方法 —— 24 个算法</b></sub>
 
-[![采集](https://img.shields.io/badge/%E9%87%87%E9%9B%86-%E2%9C%85_1-brightgreen)](#已实现算法) [![表征](https://img.shields.io/badge/%E8%A1%A8%E5%BE%81-%E2%9C%85_7-brightgreen)](#已实现算法) [![分析](https://img.shields.io/badge/%E5%88%86%E6%9E%90-%E2%9C%85_3-brightgreen)](#已实现算法)
+[![采集](https://img.shields.io/badge/%E9%87%87%E9%9B%86-%E2%9C%85_1-brightgreen)](docs/算法清单.md) [![表征](https://img.shields.io/badge/%E8%A1%A8%E5%BE%81-%E2%9C%85_7-brightgreen)](docs/算法清单.md) [![分析](https://img.shields.io/badge/%E5%88%86%E6%9E%90-%E2%9C%85_3-brightgreen)](docs/算法清单.md)
 
-[![分类](https://img.shields.io/badge/%E5%88%86%E7%B1%BB-%E2%9C%85_3-brightgreen)](#已实现算法) [![归因](https://img.shields.io/badge/%E5%BD%92%E5%9B%A0-%E2%9C%85_8-brightgreen)](#已实现算法) [![恢复](https://img.shields.io/badge/%E6%81%A2%E5%A4%8D-%E2%9C%85_3-brightgreen)](#已实现算法)
+[![分类](https://img.shields.io/badge/%E5%88%86%E7%B1%BB-%E2%9C%85_3-brightgreen)](docs/算法清单.md) [![归因](https://img.shields.io/badge/%E5%BD%92%E5%9B%A0-%E2%9C%85_8-brightgreen)](docs/算法清单.md) [![恢复](https://img.shields.io/badge/%E6%81%A2%E5%A4%8D-%E2%9C%85_3-brightgreen)](docs/算法清单.md)
 
 </div>
 
-Agent Trace Analysis Platform（**atap**）不是又一个追踪平台——它是**架在你
-已有可观测性栈之上的归因与恢复层**。它从运行中的 Langfuse 拉取轨迹（或经
-JSONL / OTel / Phoenix 适配器读入），拉平成统一事件流，跑近年 agent 错误
-分析研究通行的六环节流水线——**表征 → 分析评测 → 错误分类 → 失败归因 →
-恢复闭环**——再把结论写回团队本来就看得见的地方：Langfuse score 在 trace
-上携带根因码与置信度、在被归因的 observation 上打 blamed-step 标记，score
-metadata 里带完整假设与运行批次标识。
+Agent Trace Analysis Platform（**atap**）不是又一个追踪平台——它是**架在你已有
+可观测性栈之上的归因与恢复层**：数据来自运行中的 Langfuse 实例，或普通的
+JSONL / OTel / Phoenix 导出。
+
+拉取的轨迹被拍平成统一事件流，跑近年 agent 错误分析研究通行的六环节
+流水线——**表征 → 分析评测 → 错误分类 → 失败归因 → 恢复闭环**。
+
+结论写回团队本来就看得见的地方：
+
+- **trace 上**——Langfuse score 携带根因码与置信度；
+- **被归因的 observation 上**——blamed-step 标记；
+- **score metadata 里**——完整假设与运行批次标识。
 
 流水线是 **transformers 式可插拔**：每个算法一个模块、继承阶段基类、注册进
 Registry、YAML 配置组合 pipeline；算法之间只通过产物（artifact）解耦，不互相
 import（由 import 图不变量测试强制）。
 
-- **5 个阶段 24 个算法**，每个都忠实对应一篇文献（见下表）
+- **5 个阶段 24 个算法**，每个都忠实对应一篇文献——完整表格见
+  [docs/算法清单.md](docs/算法清单.md)（[English](docs/algorithms.md)）
 - **确定性离线模式** —— FakeLLM 伪判官 + 注入故障的玩具沙盒，完全可复现、零网络
 - **真实 LLM** —— 任意 OpenAI 兼容 API，逐调用审计日志
 - **统一归因契约** —— 规则/判官/图/重放等一切定位算法产出同一个 `Hypothesis` 结构，恢复阶段只消费它
@@ -84,42 +90,8 @@ import（由 import 图不变量测试强制）。
       重跑轨迹回到 ④ 闭环验证              ◀─────┘   （closed_loop: true）
 ```
 
-## 已实现算法
-
-| 流程 | 模块 | 机制 | 文献 |
-|---|---|---|---|
-| 表征 | `canonical_events` | R0：span 树拍平为统一事件流——下游一切阶段唯一的数据接口 | AgentDebugX [2607.18754](https://arxiv.org/abs/2607.18754) |
-| 表征 | `ssf` | R1：显著性折叠，可逆占位符+摘要，抗长轨迹 | TrajAudit [2605.26563](https://arxiv.org/abs/2605.26563) |
-| 表征 | `action_signature` | R5：九类动作+参数指纹+七效果标签+锚集/里程碑/LCS | TraceProbe [2607.06184](https://arxiv.org/abs/2607.06184) |
-| 表征 | `idg` | R2：信息依赖图，refs 直出 usage 边，零 LLM | GraphTracer [2510.10581](https://arxiv.org/abs/2510.10581)（撤稿，仅思想） |
-| 表征 | `hierarchy_tree` | R4：探索=兄弟/改状态=子节点 + stage 索引 + tree.md 压缩渲染 | CodeTracer [2604.11641](https://arxiv.org/abs/2604.11641) |
-| 表征 | `claim_ledger` | R3：claim 六元组台账，LLM 全局单遍 | DRIFT [2606.02060](https://arxiv.org/abs/2606.02060) |
-| 表征 | `hcg` | 层次因果图三层节点 + sub/agt/step 三类边，确定性构建 | CHIEF [2602.23701](https://arxiv.org/abs/2602.23701) |
-| 分析 | `judge_eval` | LLM-as-judge 质量分+finding，few-shot | MAST [2503.13657](https://arxiv.org/abs/2503.13657) / Agent-as-a-Judge [2410.10934](https://arxiv.org/abs/2410.10934) |
-| 分析 | `loop_detect` | 循环检测谓词：search loop/re-read churn/tool oscillation/redundant search，确定性免 LLM | TraceProbe [2607.06184](https://arxiv.org/abs/2607.06184) |
-| 分析 | `drift_detect` | version/data/behavior 三族漂移对照：共享支撑 PSI + 支撑失配 + 最小分组门槛 + 共线特征去重 | 系统级 taxonomy [2511.19933](https://arxiv.org/abs/2511.19933) |
-| 分类 | `mast_judge` | MAST 3 类 14 模式打标，词表校验；`allow_novel` 残差通道 | MAST [2503.13657](https://arxiv.org/abs/2503.13657) |
-| 分类 | `rule_pack` | L0 免费规则包：畸形调用/无进展循环/过早成功声明/无效输出 | AgentDebugX [2607.18754](https://arxiv.org/abs/2607.18754) |
-| 分类 | `inducer` | 残差聚类→新错误模式提案；人工闸门 `atap taxonomy accept`，永不自动生效 | AgentDebugX §3.4 [2607.18754](https://arxiv.org/abs/2607.18754) |
-| 归因 | `rg_ug` | L0 确定性：qrels 集合运算判 RG/UG 四子类 + episode 效用，零 LLM | 搜索智能体诊断 [2608.01913](https://arxiv.org/abs/2608.01913) |
-| 归因 | `sbfl` | L0 频谱先验：γ/β/α/λ-decay+Kulczynski2^λ，跨轨迹聚合 | FAMAS [2509.13782](https://arxiv.org/abs/2509.13782) |
-| 归因 | `all_at_once` | L1 单遍全轨迹（消费 SSF 折叠视图） | Who&When [2505.00212](https://arxiv.org/abs/2505.00212) |
-| 归因 | `binary_search` | L2 二分定位，⌈log₂n⌉ 轮，判官只看下半段 | Who&When [2505.00212](https://arxiv.org/abs/2505.00212) |
-| 归因 | `claim_audit` | R3 消费：支撑四级→专家审计→保守回溯→first_error_span | DRIFT [2606.02060](https://arxiv.org/abs/2606.02060) |
-| 归因 | `tree_diagnosis` | R4 消费：树级定位→stage 区间下钻，两次调用 | CodeTracer [2604.11641](https://arxiv.org/abs/2604.11641) |
-| 归因 | `chief` | HCG 消费：oracle 合成→逆拓扑 F_eval 回溯→渐进因果筛选 | CHIEF [2602.23701](https://arxiv.org/abs/2602.23701) |
-| 归因 | `counterfactual_replay` | L3 终审：候选步消息干预重放（k=3 窗口）滤伪因果；调整后的判决 `supersede` 上游假设 | TraceElephant [2604.22708](https://arxiv.org/abs/2604.22708) |
-| 恢复 | `targeted_rerun` | 保留前缀、从 t* 带反馈重跑 ≤5 轮 | AgentDebug [2509.25370](https://arxiv.org/abs/2509.25370) |
-| 恢复 | `feedback_injection` | 归因反思注入下一轮完整重解，3 轮 | AgenTracer [2509.03312](https://arxiv.org/abs/2509.03312) |
-| 恢复 | `dover` | do-then-verify：trial 切分→最小消息干预→原位替换重放 ×3→里程碑差分四判定 | DoVer [2512.06749](https://arxiv.org/abs/2512.06749) |
-
-配套基础设施：
-
-- `sandbox/` —— 玩具研究问答沙盒（planner→searcher→reporter），mock 检索语料 +
-  qrels 两层标注（E/G）+ 验证器 + 六种注入故障 + 两种扩展故障 + 漂移语料生成器，
-  标签按构造已知（AgenTracer 路线 B 思想）；
-- `llm/` —— FakeLLM 确定性伪判官（只看判官可见文本做规则化症状判定，不读
-  ground truth），以及 OpenAI 兼容客户端与共用调用审计挂件。
+完整算法表格（24 个算法、每个对应一篇文献）与配套基础设施说明移至
+**[docs/算法清单.md](docs/算法清单.md)**（[English](docs/algorithms.md)）。
 
 ## 安装
 
@@ -382,5 +354,6 @@ docs/          # 计划 · 审计报告 · 开发日志
 - [ ] 真实数据集评测 —— 在公开的真实 agent 轨迹数据集/基准上验证管线，替代构造语料的验收数字
 
 详细计划：[docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
+算法清单：[docs/算法清单.md](docs/算法清单.md) ·
 集成指南：[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) ·
 开发日志：[docs/README_dev_log.md](docs/README_dev_log.md)
