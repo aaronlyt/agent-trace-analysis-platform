@@ -132,8 +132,10 @@ source:
 
 ## 5. 幂等与增量
 
-- 默认跳过已带 `atap:*` score 的 trace(拉取时顺带取回的 score 列表复用,
-  不额外发请求);
+- 默认跳过**已完成评估**的 trace:trace 级 `atap:root-cause` 是最后写入的
+  "完成标记",存在即整批跳过(拉取时顺带取回的 score 列表复用,不额外发请求);
+  中途被打断的批次(只落了 observation 级 score、缺 root-cause 标记)下次
+  自动重评,残留 score 靠 `run_id` 区分,不会永久停在半标注状态;
 - 配合 `--since 24h` 即"每天评前一天的新 trace",无需游标文件;
   注意 `push_langfuse` 推入的轨迹时间戳是**推送时刻**(exporter 的 epoch-0
   仅用于离线确定性,push 时会重打真实时间),`--since` 对刚推的批次可用,
@@ -167,7 +169,9 @@ source:
   (`LangfuseClient.scores/observations`),否则 skip 判定与 outcome 推导会被
   其它 trace 的数据污染;
 - categorical score 的字符串值在 API 的 `stringValue` 字段(`value` 数字列
-  显示为 0 属正常,UI 渲染 stringValue);
+  显示为 0 属正常,UI 渲染 stringValue);写入侧 POST 的形状是
+  `{"value": "<code>", "dataType": "CATEGORICAL"}`——在 self-hosted v3
+  实测往返通过,**云 v4 未验证**,迁移时需复测(读写形状可能随版本变化);
 - Docker 环境:VM 内存 ≥ 4GB(colima 默认 2GB 会让 web 容器被 OOM kill,
   `colima start --memory 6 --cpu 4`);镜像拉取不通时给 VM 内 docker daemon
   配代理或 registry mirror;`LANGFUSE_INIT_USER_EMAIL` 必须是合法邮箱格式

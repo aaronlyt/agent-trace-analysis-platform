@@ -27,7 +27,7 @@ from atap.core.schema import Hypothesis, Outcome, TraceEvent, Trajectory
 from atap.io import LangfuseAPISource, LangfuseClient, ScoreWriter, push_langfuse
 from atap.io.jsonl_store import build_source
 from atap.io.langfuse import LangfuseTraceSource
-from atap.io.langfuse_live import _parse_since, observation_id_by_event_index
+from atap.io.langfuse_live import _PAGE_SIZE, _parse_since, observation_id_by_event_index
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +183,87 @@ def test_source_maps_live_observations_to_r0():
     assert observation_id_by_event_index(by_id["t-fail"]) == {0: "f1", 1: "f2", 2: "f3"}
 
 
+def test_observation_mapping_locked_to_canonical_walk():
+    """Event-index -> observation-id must track what canonical_events actually
+    produced. The replay, the ``source_span_ids`` artifact, and the real event
+    stream are asserted equal on a NESTED tree -- a flat tree cannot catch a
+    traversal change (pre-order vs post-order, sibling reordering)."""
+    t = Trajectory(
+        trace_id="t-nest",
+        task="nested",
+        events=[],
+        outcome=Outcome(success=False),
+        raw={"task_id": "x", "spans": [
+            {"id": "n1", "kind": "LLM_CALL", "agent": "planner", "action": "plan",
+             "payload": {}, "refs": [], "children": [
+                 {"id": "n2", "kind": "TOOL_CALL", "agent": "searcher", "action": "search",
+                  "payload": {}, "refs": [], "children": [
+                      {"id": "n4", "kind": "TOOL_CALL", "agent": "searcher", "action": "fetch",
+                       "payload": {}, "refs": [], "children": []}]},
+                 {"id": "n3", "kind": "LLM_CALL", "agent": "reporter", "action": "report",
+                  "payload": {}, "refs": [], "children": []}]},
+        ]},
+    )
+    b, = _flatten([t])
+    # DFS pre-order: parent first, children in list order, depth before breadth
+    assert observation_id_by_event_index(t) == {0: "n1", 1: "n2", 2: "n4", 3: "n3"}
+    # the artifact the writer prefers says the same thing and lines up with
+    # the actual event stream (unique action -> unambiguous span per event)
+    assert b.get("represent", "canonical_events")["source_span_ids"] == ["n1", "n2", "n4", "n3"]
+    assert [e.action for e in t.events] == ["plan", "search", "fetch", "report"]
+
+    # drift sentinel: a replay disagreeing with the flattened event count
+    # fails loudly instead of pinning blamed steps to the wrong observation
+    t2 = Trajectory(
+        trace_id="t-short",
+        task="x",
+        events=[TraceEvent(id="e000", ts=0.0, kind="LLM_CALL", agent="a", index=0)],
+        outcome=Outcome(success=False),
+        raw={"task_id": "x", "spans": [
+            {"id": "s1", "kind": "LLM_CALL", "agent": "a", "payload": {}, "refs": [], "children": []},
+            {"id": "s2", "kind": "TOOL_CALL", "agent": "b", "payload": {}, "refs": [], "children": []},
+        ]},
+    )
+    with pytest.raises(ValueError, match="drifted"):
+        observation_id_by_event_index(t2)
+
+    # the writer prefers the artifact: blaming event 2 lands on n4 even though
+    # a positional guess from event ids (e002) would suggest the third span
+    b.put("attribute", "all_at_once", {"hypotheses": [Hypothesis(
+        agent="searcher", step=2, root_cause="fetches the wrong document",
+        root_cause_code="FM-1.2", responsible_side="model",
+        evidence=["e002 fetch"], fix_suggestion="check the refs first",
+        confidence=0.9, source="all_at_once")]})
+    step = next(p for p in ScoreWriter(None).scores_for_bundle(b)
+                if p["name"] == "atap:blamed-step")
+    assert step["observationId"] == "n4"
+
+
+def test_observation_mapping_empty_without_raw_spans():
+    """Already-flat trajectories (offline JSONL / handwritten fixtures) carry
+    no span tree, so there is nothing to map: the replay returns {} -- the
+    drift sentinel must NOT fire merely because events exist."""
+    t = Trajectory(
+        trace_id="t-flat",
+        task="x",
+        events=[
+            TraceEvent(id="e000", ts=0.0, kind="LLM_CALL", agent="a", index=0),
+            TraceEvent(id="e001", ts=1.0, kind="TOOL_CALL", agent="b", index=1),
+        ],
+        outcome=Outcome(success=False),
+        raw={"task_id": "x"},
+    )
+    assert observation_id_by_event_index(t) == {}
+    b = TrajectoryBundle(t)
+    b.put("attribute", "all_at_once", {"hypotheses": [Hypothesis(
+        agent="a", step=0, root_cause="gives up early", root_cause_code="FM-1.3",
+        responsible_side="model", evidence=[], fix_suggestion="keep going",
+        confidence=0.5, source="all_at_once")]})
+    # no blamed-step score (no observation to pin), trace-level pair intact
+    payloads = ScoreWriter(None).scores_for_bundle(b)
+    assert [p["name"] for p in payloads] == ["atap:confidence", "atap:root-cause"]
+
+
 def test_source_container_span_and_name_overrides():
     obs = [
         _obs("c1", "SPAN", "crew", metadata={"agent": "crew"},
@@ -222,6 +303,39 @@ def test_source_tags_since_limit():
     # limit caps accepted traces
     src = LangfuseAPISource(client=_client(transport), limit=1)
     assert len(src.load()) == 1
+
+
+def test_iter_traces_pages_lazily_under_limit():
+    """iter_traces is a generator: with --limit reached early the remaining
+    pages are never fetched (the trace list used to be pulled eagerly for the
+    whole project, --limit only capped downstream work)."""
+    pages = {
+        1: [{"id": f"t-a{i}", "name": "bulk", "timestamp": "2026-08-29T10:00:00Z"}
+            for i in range(_PAGE_SIZE)],
+        2: [{"id": "t-b0", "name": "bulk", "timestamp": "2026-08-29T10:00:00Z"}],
+    }
+    trace_requests: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        params = dict(request.url.params)
+        if request.url.path == "/api/public/traces":
+            page = int(params.get("page", 1))
+            trace_requests.append(page)
+            items = pages.get(page, [])
+            return httpx.Response(200, json={"data": items, "meta": {
+                "page": page, "limit": 50, "totalItems": 51, "totalPages": 2}})
+        # per-trace endpoints: empty envelopes are enough for load()
+        return httpx.Response(200, json={"data": [], "meta": {
+            "page": 1, "limit": 50, "totalItems": 0, "totalPages": 1}})
+
+    src = LangfuseAPISource(client=_client(httpx.MockTransport(handler)), limit=1)
+    assert len(src.load()) == 1
+    assert trace_requests == [1]            # page 2 never fetched
+
+    trace_requests.clear()
+    src2 = LangfuseAPISource(client=_client(httpx.MockTransport(handler)))
+    assert len(src2.load()) == _PAGE_SIZE + 1   # no limit -> every page consumed
+    assert trace_requests == [1, 2]
 
 
 def test_parse_since_forms():
@@ -285,6 +399,9 @@ def test_scorewriter_format_and_leak_freedom():
     payloads = ScoreWriter(None).scores_for_bundle(_bundle_with_hypothesis())
     by_name = {p["name"]: p for p in payloads}
     assert set(by_name) == {"atap:root-cause", "atap:confidence", "atap:blamed-step"}
+    # write order: blamed-step and confidence first, root-cause LAST -- it is
+    # the completion marker the skip logic keys on
+    assert [p["name"] for p in payloads] == ["atap:blamed-step", "atap:confidence", "atap:root-cause"]
     assert by_name["atap:root-cause"]["value"] == "FM-1.3"
     assert by_name["atap:root-cause"]["dataType"] == "CATEGORICAL"
     assert by_name["atap:confidence"]["dataType"] == "NUMERIC"
@@ -326,11 +443,14 @@ def test_scorewriter_run_meta_distinguishes_batches():
         assert set(("run_id", "run_name", "llm", "seed")) <= set(meta)
     assert {p["metadata"]["run_id"] for p in pa} == {"eval_a"}
     assert {p["metadata"]["run_id"] for p in pb} == {"eval_b"}
-    assert pa[0]["comment"].startswith("atap attribution (by all_at_once, run eval_a):")
-    assert pa[1]["comment"].endswith("(by all_at_once, run eval_a)")
+    rc_a = next(p for p in pa if p["name"] == "atap:root-cause")
+    conf_a = next(p for p in pa if p["name"] == "atap:confidence")
+    assert rc_a["comment"].startswith("atap attribution (by all_at_once, run eval_a):")
+    assert conf_a["comment"].endswith("(by all_at_once, run eval_a)")
     # without run_meta nothing breaks, comments stay in the legacy shape
     legacy = ScoreWriter(None).scores_for_bundle(b)
-    assert legacy[0]["comment"].startswith("atap attribution (by all_at_once):")
+    assert next(p for p in legacy if p["name"] == "atap:root-cause")["comment"].startswith(
+        "atap attribution (by all_at_once):")
     assert "run_id" not in legacy[0]["metadata"]
 
 
@@ -343,13 +463,20 @@ def test_scorewriter_skip_force_dryrun():
     assert writer.write_bundle(b, prior_scores=prior) == ("skipped", 0)
     assert state["posts"] == []
 
-    assert writer.write_bundle(b, prior_scores=prior, force=True) == ("written", 3)
+    # an interrupted earlier batch (only observation-level scores arrived)
+    # is re-evaluated, not skipped: the skip keys on the trace-level
+    # root-cause marker, which scores_for_bundle writes last
+    partial = [{"name": "atap:blamed-step", "value": "FM-1.3"}]
+    assert writer.write_bundle(b, prior_scores=partial) == ("written", 3)
     assert len(state["posts"]) == 3
+
+    assert writer.write_bundle(b, prior_scores=prior, force=True) == ("written", 3)
+    assert len(state["posts"]) == 6
 
     dry = ScoreWriter(_client(transport), dry_run=True)
     lines = []
     assert dry.write_bundle(b, emit=lines.append) == ("dry-run", 3)
-    assert len(state["posts"]) == 3          # nothing new was sent
+    assert len(state["posts"]) == 6          # nothing new was sent
     assert any("atap:root-cause" in ln for ln in lines)
 
     # non-dry-run without a client is a hard error, not a silent no-op

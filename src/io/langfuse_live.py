@@ -50,9 +50,14 @@ exported explicitly):
   ``success=False`` -- every trace then enters analyze and the judge decides,
   rather than silently skipping possibly-broken runs [fix].
 
-Idempotency: write-back skips traces that already carry any ``atap:*`` score
-(the per-trace score list fetched during the pull is reused -- no extra
-request); ``force=True`` re-scores. Combined with ``--since`` this replaces a
+Idempotency: write-back skips traces whose earlier batch **completed** -- the
+trace-level ``atap:root-cause`` score is written LAST and doubles as the
+completion marker, so a batch interrupted mid-write (network failure between
+score POSTs) leaves the trace without the marker and the next run simply
+re-evaluates it instead of permanently keeping a half-labeled state (residue
+from the aborted batch stays distinguishable via its ``run_id`` metadata).
+The per-trace score list fetched during the pull is reused -- no extra
+request; ``force=True`` re-scores. Combined with ``--since`` this replaces a
 cursor file: re-running the same window writes nothing twice.
 
 Leak discipline: score comments are assembled from ``Hypothesis`` fields only
@@ -67,7 +72,7 @@ import json
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 
 from atap.core.schema import Outcome, Trajectory
 
@@ -201,32 +206,39 @@ class LangfuseClient:
         except ValueError as e:
             raise LangfuseError(f"Langfuse {method} {path} returned non-JSON body: {r.text[:300]}") from e
 
-    def _paged(self, path: str, params: dict) -> list[dict]:
-        """Collect every item of a ``{data, meta}``-enveloped list endpoint."""
-        items: list[dict] = []
+    def _iter_paged(self, path: str, params: dict) -> Iterator[dict]:
+        """Yield items of a ``{data, meta}``-enveloped list endpoint page by
+        page -- a generator, so a consumer that stops early (``--limit``)
+        never pays for the remaining pages [fix: the trace list used to be
+        fetched eagerly for the whole project]."""
         page = 1
         while True:
             body = self._request("GET", path, params={**params, "page": page, "limit": _PAGE_SIZE})
             if isinstance(body, list):  # defensive: a version without the envelope
-                return [x for x in body if isinstance(x, dict)]
+                yield from (x for x in body if isinstance(x, dict))
+                return
             batch = [x for x in (body or {}).get("data") or [] if isinstance(x, dict)]
-            items.extend(batch)
+            yield from batch
             meta = (body or {}).get("meta") or {}
             try:
                 total_pages = int(meta.get("totalPages", 0))
             except (TypeError, ValueError):
                 total_pages = 0
             if not batch or len(batch) < _PAGE_SIZE or (total_pages and page >= total_pages):
-                return items
+                return
             page += 1
+
+    def _paged(self, path: str, params: dict) -> list[dict]:
+        """Collect every item of a ``{data, meta}``-enveloped list endpoint."""
+        return list(self._iter_paged(path, params))
 
     # -- endpoints ----------------------------------------------------------
 
-    def iter_traces(self, *, from_iso: str | None = None) -> Iterable[dict]:
+    def iter_traces(self, *, from_iso: str | None = None) -> Iterator[dict]:
         params: dict[str, Any] = {}
         if from_iso:
             params["fromTimestamp"] = from_iso
-        return self._paged("/traces", params)
+        return self._iter_paged("/traces", params)
 
     def observations(self, trace_id: str) -> list[dict]:
         # traceId enforced client-side as well: some self-hosted v3 builds
@@ -502,7 +514,13 @@ def observation_id_by_event_index(trajectory: Trajectory) -> dict[int, str]:
     Replays canonical_events' DFS pre-order walk over ``raw["spans"]`` (parent
     first, then children in list order) -- the walk that assigns ``index``, so
     position i in the replay is exactly event i. Lets observation-level scores
-    pin the blamed step without touching the represent layer."""
+    pin the blamed step without touching the represent layer.
+
+    Fallback path only: prefer ``_event_index_observation_ids``, which reads
+    the ``source_span_ids`` artifact canonical_events emits. This replay
+    self-checks against the flattened event count and raises on mismatch -- a
+    silently misaligned mapping would pin blamed-step scores onto the wrong
+    observation [fix, review round]."""
     order: list[str | None] = []
 
     def walk(nodes: list[dict] | None) -> None:
@@ -512,7 +530,35 @@ def observation_id_by_event_index(trajectory: Trajectory) -> dict[int, str]:
 
     raw = trajectory.raw if isinstance(trajectory.raw, dict) else {}
     walk(raw.get("spans"))
+    # drift sentinel: only when the replay found spans at all -- a trajectory
+    # without a span tree (already-flat R0) simply has nothing to map and
+    # keeps the legacy empty-mapping contract
+    if order and trajectory.events and len(trajectory.events) != len(order):
+        raise ValueError(
+            f"observation_id_by_event_index: replayed span order has "
+            f"{len(order)} node(s) but trace {trajectory.trace_id!r} carries "
+            f"{len(trajectory.events)} flattened event(s) -- the "
+            "canonical_events walk and this replay have drifted; blamed-step "
+            "scores would land on the wrong observation"
+        )
     return {i: oid for i, oid in enumerate(order) if oid}
+
+
+def _event_index_observation_ids(bundle: Any) -> dict[int, str]:
+    """Event index -> observation id for write-back, artifact first.
+
+    canonical_events emits ``source_span_ids`` parallel to its event order;
+    reading it keeps blamed-step pinning correct even if the flattening walk
+    changes later. Bundles without the artifact (hand-built fixtures,
+    third-party represent output) fall back to the guarded replay."""
+    art = None
+    try:
+        art = bundle.get("represent", "canonical_events").get("source_span_ids")
+    except (AttributeError, KeyError):
+        art = None
+    if isinstance(art, list) and len(art) == len(bundle.trajectory.events):
+        return {i: str(sid) for i, sid in enumerate(art) if sid}
+    return observation_id_by_event_index(bundle.trajectory)
 
 
 def _top_evidence(h: Any, limit: int = 3) -> str:
@@ -575,35 +621,20 @@ class ScoreWriter:
 
     def scores_for_bundle(self, bundle: Any) -> list[dict]:
         """Pure formatting (no network): top hypothesis -> trace-level scores,
-        every hypothesis -> one observation-level blamed-step score."""
+        every hypothesis -> one observation-level blamed-step score.
+
+        Payload order is load-bearing: blamed-step and confidence scores come
+        first and the trace-level ``atap:root-cause`` LAST -- it is the
+        completion marker the skip logic keys on, so a write interrupted
+        mid-batch leaves the trace re-evaluable on the next run instead of
+        permanently half-labeled."""
         hyps = bundle.hypotheses()
         if not hyps:
             return []
         tid = bundle.trace_id
         top = max(hyps, key=lambda h: h.confidence)
-        payloads: list[dict] = [
-            {
-                "traceId": tid,
-                "name": SCORE_ROOT_CAUSE,
-                "value": top.root_cause_code or "unlabeled",
-                "dataType": "CATEGORICAL",
-                "comment": _comment(top, self.comment_max, self.run_id),
-                "metadata": {**_hyp_metadata(top), **self.run_meta},
-            },
-            {
-                "traceId": tid,
-                "name": SCORE_CONFIDENCE,
-                "value": round(float(top.confidence), 4),
-                "dataType": "NUMERIC",
-                "comment": (
-                    f"confidence of the top atap hypothesis (by {top.source or 'atap'}"
-                    + (f", run {self.run_id}" if self.run_id else "")
-                    + ")"
-                ),
-                "metadata": {**_hyp_metadata(top), **self.run_meta},
-            },
-        ]
-        obs_ids = observation_id_by_event_index(bundle.trajectory)
+        payloads: list[dict] = []
+        obs_ids = _event_index_observation_ids(bundle)
         seen: set[tuple[str, str]] = set()
         # highest-confidence first, so the per-observation dedup below keeps
         # the strongest hypothesis when several algorithms blame the same step
@@ -621,6 +652,26 @@ class ScoreWriter:
                 "comment": f"{h.agent} @ step {h.step}: {h.root_cause}"[: self.comment_max],
                 "metadata": {**_hyp_metadata(h), **self.run_meta},
             })
+        payloads.append({
+            "traceId": tid,
+            "name": SCORE_CONFIDENCE,
+            "value": round(float(top.confidence), 4),
+            "dataType": "NUMERIC",
+            "comment": (
+                f"confidence of the top atap hypothesis (by {top.source or 'atap'}"
+                + (f", run {self.run_id}" if self.run_id else "")
+                + ")"
+            ),
+            "metadata": {**_hyp_metadata(top), **self.run_meta},
+        })
+        payloads.append({
+            "traceId": tid,
+            "name": SCORE_ROOT_CAUSE,
+            "value": top.root_cause_code or "unlabeled",
+            "dataType": "CATEGORICAL",
+            "comment": _comment(top, self.comment_max, self.run_id),
+            "metadata": {**_hyp_metadata(top), **self.run_meta},
+        })
         return payloads
 
     def write_bundle(
@@ -632,10 +683,15 @@ class ScoreWriter:
         emit: Callable[[str], None] | None = None,
     ) -> tuple[str, int]:
         """Write scores for one bundle; returns ``(decision, n_payloads)`` with
-        decision in {no-hypotheses, skipped, dry-run, written}."""
+        decision in {no-hypotheses, skipped, dry-run, written}.
+
+        The skip requires the trace-level ``atap:root-cause`` marker (written
+        last by ``scores_for_bundle``): a trace carrying only observation-level
+        scores from an interrupted batch is re-evaluated, and the residue
+        stays distinguishable through its ``run_id`` metadata."""
         say = emit or (lambda s: None)
-        if prior_scores and not force and any(s.get("name") in ATAP_SCORE_NAMES for s in prior_scores):
-            say(f"skip {bundle.trace_id}: already carries an atap:* score (use --force to re-evaluate)")
+        if prior_scores and not force and any(s.get("name") == SCORE_ROOT_CAUSE for s in prior_scores):
+            say(f"skip {bundle.trace_id}: complete earlier batch (trace-level {SCORE_ROOT_CAUSE} present; use --force to re-evaluate)")
             return "skipped", 0
         payloads = self.scores_for_bundle(bundle)
         if not payloads:

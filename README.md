@@ -222,8 +222,10 @@ atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
     --tags production --since 24h --dry-run    # dry-run first; drop the flag to write
 ```
 
-`--dry-run` prints the scores without sending anything; traces that already
-carry an `atap:*` score are skipped (idempotent — `--force` re-evaluates).
+`--dry-run` prints the scores without sending anything; traces whose earlier
+batch completed are skipped (the trace-level `atap:root-cause` score is
+written last and doubles as the completion marker, so an interrupted batch is
+simply re-evaluated; `--force` re-evaluates regardless).
 Credentials come from the environment only. A self-hosted demo instance and the
 full round-trip walkthrough (seed with `atap langfuse-push`, evaluate, watch the
 scores appear) live in

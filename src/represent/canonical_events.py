@@ -36,9 +36,14 @@ sandbox/Langfuse adapters); this algorithm is responsible for:
   fixtures), only normalization is applied (fill in id/index).
 
 Artifacts: ``{"n_events", "kinds", "agents", "n_refs", "dropped_refs",
-"duplicate_span_ids", "remapped_kinds"}``; events are written back to
-``trajectory.events`` (the representation layer is the sole data interface
-for downstream consumers).
+"duplicate_span_ids", "remapped_kinds"}`` plus ``"source_span_ids"`` -- the
+originating span id per event, parallel to the event order (emitted only when
+a span tree was flattened; already-flat trajectories keep the legacy shape).
+Consumers that must pin an event back to its collection-layer span (e.g. the
+live-Langfuse blamed-step write-back) read this instead of replaying the
+walk, so mapping and flattening can never drift apart. Events are written
+back to ``trajectory.events`` (the representation layer is the sole data
+interface for downstream consumers).
 """
 
 from __future__ import annotations
@@ -85,30 +90,31 @@ class CanonicalEventsRepresenter(Representer):
         duplicates = 0
         remapped = 0
         if t.raw and isinstance(t.raw.get("spans"), list):
-            t.events, dropped, duplicates, remapped = self._flatten(t.raw["spans"])
+            t.events, dropped, duplicates, remapped, span_ids = self._flatten(t.raw["spans"])
         else:
             t.events = self._normalize(t.events)
-        bundle.put(
-            "represent",
-            self.name,
-            {
-                "n_events": len(t.events),
-                "kinds": dict(Counter(ev.kind for ev in t.events)),
-                "agents": t.agents(),
-                "n_refs": sum(len(ev.refs) for ev in t.events),
-                "dropped_refs": dropped,
-                "duplicate_span_ids": duplicates,
-                "remapped_kinds": remapped,
-            },
-        )
+            span_ids = None
+        artifact = {
+            "n_events": len(t.events),
+            "kinds": dict(Counter(ev.kind for ev in t.events)),
+            "agents": t.agents(),
+            "n_refs": sum(len(ev.refs) for ev in t.events),
+            "dropped_refs": dropped,
+            "duplicate_span_ids": duplicates,
+            "remapped_kinds": remapped,
+        }
+        if span_ids is not None:
+            artifact["source_span_ids"] = span_ids
+        bundle.put("represent", self.name, artifact)
 
     # ------------------------------------------------------------------
 
     @staticmethod
     def _flatten(
         spans: list[dict],
-    ) -> tuple[list[TraceEvent], int, int, int]:
+    ) -> tuple[list[TraceEvent], int, int, int, list[str]]:
         events: list[TraceEvent] = []
+        span_ids: list[str] = []  # originating span id per event, same order
         by_span: dict[str, TraceEvent] = {}  # span id -> event (first occurrence wins)
         raw_refs: dict[str, list[str]] = {}  # event id -> raw span references
         dropped = 0
@@ -161,6 +167,9 @@ class CanonicalEventsRepresenter(Representer):
                     duplicates += 1
                 else:
                     by_span[span_id] = ev
+                # one entry per event, duplicates included: the artifact stays
+                # parallel to ``events`` even when ids repeat
+                span_ids.append(str(span_id))
                 raw_refs[eid] = list(node.get("refs") or [])
                 walk(node.get("children") or [], eid)
 
@@ -171,7 +180,7 @@ class CanonicalEventsRepresenter(Representer):
             mapped = [by_span[r].id for r in refs if r in by_span]
             dropped += len(refs) - len(mapped)
             ev.refs = mapped
-        return events, dropped, duplicates, remapped
+        return events, dropped, duplicates, remapped, span_ids
 
     @staticmethod
     def _normalize(events: list[TraceEvent]) -> list[TraceEvent]:

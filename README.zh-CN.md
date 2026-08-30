@@ -199,8 +199,9 @@ atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
     --tags production --since 24h --dry-run    # 先空跑确认，去掉该旗标即真写
 ```
 
-`--dry-run` 只打印将写入的 score、不发任何请求；已带 `atap:*` score 的 trace
-自动跳过（幂等，`--force` 强制重评）。凭据只从环境变量读取。自建演示实例与
+`--dry-run` 只打印将写入的 score、不发任何请求；此前批次已完整评估的 trace
+自动跳过（trace 级 `atap:root-cause` 最后写入、充当完成标记，被打断的半批次
+下次自动重评；`--force` 无条件重评）。凭据只从环境变量读取。自建演示实例与
 完整 round-trip 演示（`atap langfuse-push` 播种 → 评估 → 面板查看 score）见
 [docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) 与
 `docker-compose.langfuse.yml`。
