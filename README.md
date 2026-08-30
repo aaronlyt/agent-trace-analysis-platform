@@ -75,9 +75,27 @@ through imports (enforced by import-invariant tests).
 > **Disclaimer** — this project is a learning- and research-oriented implementation of
 > the agent error-analysis pipeline. Validation is **limited**: acceptance numbers come
 > from a toy sandbox with constructed faults, plus a small number of real-model runs
-> (see [Validation status](#validation-status)); they are not benchmark results. Use it
+> (see [docs/validation.md](docs/validation.md)); they are not benchmark results. Use it
 > to learn the pipeline and the algorithms — not as production tooling or as evidence
 > of real-world performance.
+
+## Results on real data
+
+First external benchmark: **Who&When** ([ag2ai/Agents_Failure_Attribution](https://github.com/ag2ai/Agents_Failure_Attribution),
+ICML 2025) — 184 real multi-agent failure trajectories, gold hidden from the judge,
+scored with the stock `compare` evaluator
+([full report](docs/benchmark_whoswhen_2026-08-30.md)):
+
+| Stack (deepseek-v4-flash) | step hit | agent hit | cost |
+|---|---|---|---|
+| all_at_once | **33.2%** | **50.0%** | $1.43 · 2.9h |
+| all_at_once, thinking off | 32.6% | 44.0% | $0.16 · 9min |
+| binary_search | 11.4% | 34.2% | $0.26 · 32min |
+
+Model choice dominates — step accuracy is effort-insensitive on algorithm-generated
+traces at 9× lower cost, while reasoning pays only on hand-crafted transcripts.
+The sandbox acceptance numbers ([docs/validation.md](docs/validation.md)) prove the
+pipeline contract; these numbers prove it on real data.
 
 ## How it works
 
@@ -162,6 +180,9 @@ artifacts directory: runs/demo/artifacts (report.json + per-trajectory per-stage
 
 Then explore the runnable configurations:
 
+<details>
+<summary><b>More runnable configs</b> — compare · v3/v4 stacks · drift · dover · counterfactual replay · export · verbose logs</summary>
+
 ```bash
 # same stack as the demo, driven by a config file
 atap run --config configs/pipeline_offline.yaml
@@ -192,6 +213,8 @@ atap export --traces runs/corpus/traces.jsonl --format langfuse --out runs/expor
 # DEBUG-level process logs (default INFO)
 atap -v run --config configs/pipeline_offline.yaml
 ```
+
+</details>
 
 ### Real LLM runs
 
@@ -276,117 +299,9 @@ stages:
 
 ### Adding your own algorithm
 
-One module under the stage package, subclass the stage base, decorate with `@register` —
-zero core changes, and it shows up in `atap list`:
-
-```python
-# src/attribute/my_attributor.py
-from atap.attribute.base import Attributor
-from atap.core.registry import register
-from atap.core.schema import Hypothesis
-
-
-@register
-class MyAttributor(Attributor):        # stage = "attribute" is set by the base class
-    name = "my_attributor"
-
-    def run_one(self, bundle, ctx):
-        if bundle.succeeded:
-            return                      # detection ≠ attribution
-        self.emit(bundle, [Hypothesis(
-            agent="reporter", step=3,
-            root_cause="…", root_cause_code="FM-1.3",
-            evidence=["event-3 …"], fix_suggestion="…", confidence=0.6,
-        )])                             # writes artifacts["attribute"]["my_attributor"]
-```
-
-## Key contracts
-
-- **R0 event model** (`core/schema.py`): `TraceEvent(kind/agent/action/payload/refs/phase/parent/index)` —
-  the representation layer is the only data interface for analysis and attribution;
-- **Unified attribution output**: `Hypothesis(agent, step, root_cause, root_cause_code,
-  responsible_side, evidence, fix_suggestion, confidence)` — produced by every L0~L3
-  attribution algorithm, consumed only by recovery;
-- **Dual scope**: `run_one` (single trajectory) / `run_corpus` (cross-trajectory
-  aggregation — used by spectrum and clustering algorithms);
-- **Detection ≠ attribution**: analyze discovers symptoms; attribution runs on failures;
-  recovery outputs automatically return to analyze for verification (`closed_loop: true`).
-
-## Layered invariants (enforced by `tests/test_invariants.py`)
-
-- `core/` contains zero algorithms and zero I/O — interfaces only;
-- algorithm modules must not import other stage packages (sole exception: the shared
-  `classify/taxonomy` vocabulary) nor `sandbox/runtime/cli`;
-- `llm/` and `io/` depend on no stage package; `sandbox/` depends only on `core`;
-- every registered class's `stage` must match its owning package.
-
-## Validation status
-
-**Offline (FakeLLM, deterministic).** 332 tests pass in under a second, including the
-offline end-to-end pipeline, replay-integrity invariants, and leak-guard regressions.
-Representative acceptance numbers on the sandbox corpora:
-
-| Stack | Corpus | Offline result |
-|---|---|---|
-| demo (SSF + all-at-once + targeted rerun) | 7 traces, 6 injected faults | step 6/6 · agent 6/6 · MAST 6/6 · recovery 6/6; closed-loop round 1: 0 failures |
-| v3 (bisection + rules + feedback injection) | 18-fault corpus | step 15/18 · 141 LLM calls (vs SBFL 12/18 · 42 calls on the same corpus) |
-| rg_ug (deterministic, zero LLM) | 18-fault corpus | step 15/18 · agent 15/18 |
-| chief | 18-fault corpus | step 18/18 · agent 18/18 |
-| tree_diagnosis / claim_audit | 18-fault corpus | 18/18 · 36 calls / 12/18 (two misses are documented method boundaries) |
-| dover | 18-fault corpus | recovery 18/18; closed-loop improvement 18/18 |
-| counterfactual_replay | 18-fault corpus | 15 validated / 3 refuted — the refuted three are exactly bisection's known mislocalizations |
-
-**Real LLMs** (pre-release full test: `deepseek-v4-flash` direct, 8 config tiers, 594
-audited calls, zero judge-prompt leaks, human spot-check found no hallucination; report
-in [docs/audit_上线前真实测试_2026-08-25.md](docs/audit_上线前真实测试_2026-08-25.md)):
-
-- smoke stack: step 6/6 · agent 6/6 · recovery 6/6
-- **chief: step 17/18 · agent 18/18 — the best real-model localizer**
-- claim coverage 14/18; tree diagnosis 14/18; dover recovery 18/18; v3 closed loop 18/18
-- binary_search 3/18 — well below its 15/18 offline baseline (judge lower-half bias on
-  short trajectories; a judge-capability limit, not a pipeline defect — demoted to
-  auxiliary use)
-
-**External benchmark — Who&When** (184 real multi-agent failure trajectories, gold
-hidden from the judge; full report in
-[docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md)):
-
-| Stack (deepseek-v4-flash) | step | agent | cost |
-|---|---|---|---|
-| all_at_once, thinking on | 33.2% | 50.0% | ¥10.2 · 2.9h |
-| all_at_once, thinking off | 32.6% | 44.0% | ¥1.1 · 9min |
-| binary_search, thinking off | 11.4% | 34.2% | ¥1.8 · 32min |
-
-Takeaway: model choice dominates — step accuracy is effort-insensitive on the
-Algorithm-Generated split (thinking-off is even slightly ahead) at 9× lower cost;
-reasoning pays only on hand-crafted transcripts (agent 27.6% vs 8.6%).
-binary_search's lower-half bias reproduces on real data (0/58 on Hand-Crafted).
-
-> **Read the offline numbers correctly.** The offline sandbox decides "fault removed" by
-> keyword-matching the judge's fix suggestion against the injected fault name, so offline
-> recovery and replay-verdict numbers are deterministic functions of attribution hits.
-> They prove the pipeline contract (hypothesis → feedback → replay → verification), not
-> judge capability. For the same reason, offline *cross-algorithm* comparisons measure how
-> much information the deterministic pseudo-judge exposes per algorithm, not algorithm
-> superiority. The real-model numbers above are the meaningful ones.
-
-## Project layout
-
-```
-src/
-  core/        # registry · pipeline · schema · config — zero algorithms, zero I/O
-  represent/   # R0–R5 trajectory representations
-  analyze/     # symptom discovery: judge, loop predicates, drift detection
-  classify/    # MAST labeling · L0 rule pack · residual-mode inducer
-  attribute/   # L0–L3 failure attribution (cost ladder)
-  recover/     # targeted rerun · feedback injection · do-then-verify
-  llm/         # FakeLLM pseudo-judge · OpenAI-compatible client · call auditor
-  io/          # JSONL store · Langfuse / OTel adapters · live Langfuse bridge · export leak guard
-  sandbox/     # toy research-QA environment with fault injection and drift corpora
-configs/       # runnable pipeline configurations (offline · LLM · realtest · final)
-tests/         # 332 tests: e2e, invariants, leak regressions, replay integrity
-docs/          # plans · audit reports · dev log
-```
+One module under the stage package, subclass the stage base, decorate with `@register`
+— zero core changes, and it shows up in `atap list`. A worked example lives in
+[docs/algorithms.md](docs/algorithms.md#adding-your-own-algorithm).
 
 ## Roadmap
 
@@ -402,7 +317,10 @@ docs/          # plans · audit reports · dev log
   [docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md));
   broadening to more methods and datasets remains
 
-Detailed plans: [docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
+Architecture & contracts: [docs/architecture.md](docs/architecture.md) ·
+validation status: [docs/validation.md](docs/validation.md) ·
 algorithm table: [docs/algorithms.md](docs/algorithms.md) ·
+benchmark report: [docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md) ·
+detailed plans: [docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
 integration guide: [docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) ·
 development log: [docs/README_dev_log.md](docs/README_dev_log.md)

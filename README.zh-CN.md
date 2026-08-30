@@ -59,9 +59,25 @@ import（由 import 图不变量测试强制）。
 - **活实例外部评估** —— `atap langfuse-eval` 从运行中的 Langfuse 拉取 trace，把归因结果作为 Score 写回原 trace（trace 级根因码 + 置信度，被归因步骤的 observation 上打 blamed-step 标记）；重复评估可按 score metadata 区分批次（`run_id` / `llm` / 完整假设字段）
 
 > **声明** —— 本项目是对 agent 错误分析流程的学习/研究性质实现。**测试有限**：
-> 验收数字来自构造故障的玩具沙盒语料与少量真实模型轮次（见[验证状态](#验证状态)），
+> 验收数字来自构造故障的玩具沙盒语料与少量真实模型轮次（见[docs/validation.md](docs/validation.md)），
 > 不构成基准测试结论。请将其用于学习管线与算法机制，请勿用于生产环境，也不宜
 > 作为真实场景性能的依据。
+
+## 真实数据上的成绩
+
+首个外部基准：**Who&When**（[ag2ai/Agents_Failure_Attribution](https://github.com/ag2ai/Agents_Failure_Attribution)，
+ICML 2025）——184 条真实多智能体失败轨迹，gold 对判官不可见，用现成的
+`compare` 评测器打分（[完整报告](docs/benchmark_whoswhen_2026-08-30.md)）：
+
+| 栈（deepseek-v4-flash） | step 命中 | agent 命中 | 花费 |
+|---|---|---|---|
+| all_at_once | **33.2%** | **50.0%** | $1.43 · 2.9h |
+| all_at_once，关思考 | 32.6% | 44.0% | $0.16 · 9min |
+| binary_search | 11.4% | 34.2% | $0.26 · 32min |
+
+模型选择主导成败——算法生成轨迹上 step 命中对思考档不敏感、成本低 9 倍，
+思考只在手写转写上见效。沙盒验收数字（[docs/validation.md](docs/validation.md)）
+证明管线契约，这一组数字证明它在真实数据上成立。
 
 ## 整体流程
 
@@ -143,6 +159,9 @@ artifacts directory: runs/demo/artifacts (report.json + per-trajectory per-stage
 
 再试各档可运行配置：
 
+<details>
+<summary><b>更多可运行配置</b>——compare · v3/v4 栈 · 漂移 · dover · 反事实重放 · 导出 · DEBUG 日志</summary>
+
 ```bash
 # 与 demo 同栈，由配置文件驱动
 atap run --config configs/pipeline_offline.yaml
@@ -172,6 +191,8 @@ atap export --traces runs/corpus/traces.jsonl --format langfuse --out runs/expor
 # 过程日志 DEBUG 级（默认 INFO）
 atap -v run --config configs/pipeline_offline.yaml
 ```
+
+</details>
 
 ### 真实 LLM 运行
 
@@ -251,111 +272,8 @@ stages:
 ### 新增自己的算法
 
 在对应 stage 包下写一个模块：继承阶段基类，加 `@register`——零改核心，
-`atap list` 即见：
-
-```python
-# src/attribute/my_attributor.py
-from atap.attribute.base import Attributor
-from atap.core.registry import register
-from atap.core.schema import Hypothesis
-
-
-@register
-class MyAttributor(Attributor):        # stage = "attribute" 由基类声明
-    name = "my_attributor"
-
-    def run_one(self, bundle, ctx):
-        if bundle.succeeded:
-            return                      # 检测 ≠ 归因
-        self.emit(bundle, [Hypothesis(
-            agent="reporter", step=3,
-            root_cause="…", root_cause_code="FM-1.3",
-            evidence=["event-3 …"], fix_suggestion="…", confidence=0.6,
-        )])                             # 写入 artifacts["attribute"]["my_attributor"]
-```
-
-## 关键契约
-
-- **R0 事件模型**（`core/schema.py`）：`TraceEvent(kind/agent/action/payload/refs/
-  phase/parent/index)` —— 表征层是分析/归因的唯一数据接口；
-- **统一归因输出**：`Hypothesis(agent, step, root_cause, root_cause_code,
-  responsible_side, evidence, fix_suggestion, confidence)` —— L0~L3 任何归因算法
-  都产出此结构，恢复阶段只消费它；
-- **双作用域**：`run_one`（单轨迹）/ `run_corpus`（跨轨迹聚合——频谱与聚类类
-  算法使用）；
-- **检测 ≠ 归因 / 闭环**：analyze 只发现症状，attribute 由失败触发，recover
-  产物自动回到 analyze 验证（`closed_loop: true`）。
-
-## 分层不变量（tests/test_invariants.py 强制）
-
-- `core/` 零算法、零 I/O 实现（只允许接口协议）；
-- 算法模块不得 import 其它 stage 包（唯一例外：`classify/taxonomy` 共享词表）、
-  不得 import sandbox/runtime/cli；
-- `llm/ io/` 不依赖 stage 包；`sandbox/` 只依赖 core；
-- 注册表内所有类的 stage 必须与其所在包一致。
-
-## 验证状态
-
-**离线（FakeLLM，确定性）。** 332 个测试一秒内全绿，含离线全链路 e2e、重放
-完整性不变量与防泄漏回归。沙盒语料上的代表性验收数字：
-
-| 栈 | 语料 | 离线结果 |
-|---|---|---|
-| demo（SSF + 单遍归因 + 定向重跑） | 7 条轨迹、6 注入故障 | step 6/6 · agent 6/6 · MAST 6/6 · 恢复 6/6；闭环 round1 失败 0 |
-| v3（二分 + 规则包 + 反馈注入） | 18 故障语料 | step 15/18 · 141 次调用（同语料 SBFL 12/18 · 42 次调用） |
-| rg_ug（确定性，零 LLM） | 18 故障语料 | step 15/18 · agent 15/18 |
-| chief | 18 故障语料 | step 18/18 · agent 18/18 |
-| tree_diagnosis / claim_audit | 18 故障语料 | 18/18 · 36 次调用 / 12/18（两例 honest miss 为已记录的方法边界） |
-| dover | 18 故障语料 | 恢复 18/18；闭环改善 18/18 |
-| counterfactual_replay | 18 故障语料 | 15 validated / 3 refuted——被标伪的 3 例恰为二分的已知错步 |
-
-**真实 LLM**（上线前全量测试：deepseek-v4-flash 直连、8 档配置、594 次审计调用、
-判官 prompt 零泄漏、人工抽检无幻觉；报告见
-[docs/audit_上线前真实测试_2026-08-25.md](docs/audit_上线前真实测试_2026-08-25.md)）：
-
-- 冒烟栈：step 6/6 · agent 6/6 · 恢复 6/6；
-- **chief：step 17/18 · agent 18/18——真实模型最佳定位器**；
-- claim 覆盖 14/18；tree 14/18；dover 恢复 18/18；v3 闭环 18/18；
-- binary_search 3/18——远低于其离线基线 15/18（短轨迹下判官 lower-half 偏置，
-  属判官能力上限而非管线缺陷，建议降级辅助使用）。
-
-**外部基准 —— Who&When**（184 条真实多智能体失败轨迹，gold 对判官不可见；完整报告见
-[docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md)）：
-
-| 栈（deepseek-v4-flash） | step | agent | 花费 |
-|---|---|---|---|
-| all_at_once，开思考 | 33.2% | 50.0% | ¥10.2 · 2.9h |
-| all_at_once，关思考 | 32.6% | 44.0% | ¥1.1 · 9min |
-| binary_search，关思考 | 11.4% | 34.2% | ¥1.8 · 32min |
-
-要点：模型选择主导成败——Algorithm-Generated split 上 step 命中对思考档不敏感
-（关思考甚至略高）且成本低 9 倍；思考只在 hand-crafted 转写上见效
-（agent 27.6% vs 8.6%）。binary_search 的下半段偏置在真实数据上复现
-（Hand-Crafted 0/58）。
-
-> **离线数字请正确解读。** 离线沙盒按"判官修复文案是否命中注入故障名"判定
-> "故障已移除"，因此离线恢复率与重放判决是归因命中的确定性函数：它们证明的是
-> 管线契约（假设 → 反馈 → 重放 → 验证）正确，而非判官能力。同理，离线的
-> **跨算法对比**量的是确定性伪判官对各算法暴露的信息量差异，不构成算法优劣
-> 证据。真实模型数字才是衡量能力的口径。
-
-## 项目结构
-
-```
-src/
-  core/        # 注册表 · pipeline · schema · 配置 —— 零算法、零 I/O
-  represent/   # R0–R5 轨迹表征
-  analyze/     # 症状发现：判官评测、循环谓词、漂移检测
-  classify/    # MAST 打标 · L0 规则包 · 残差模式 inducer
-  attribute/   # L0–L3 失败归因（成本阶梯）
-  recover/     # 定向重跑 · 反馈注入 · do-then-verify
-  llm/         # FakeLLM 伪判官 · OpenAI 兼容客户端 · 调用审计
-  io/          # JSONL 存储 · Langfuse/OTel 适配器 · 活实例桥接 · 导出防泄漏
-  sandbox/     # 玩具研究问答沙盒（故障注入 + 漂移语料）
-configs/       # 可运行配置（offline · LLM · realtest · final）
-tests/         # 332 个测试：e2e · 不变量 · 防泄漏回归 · 重放完整性
-docs/          # 计划 · 审计报告 · 开发日志
-```
+`atap list` 即见。完整示例见
+[docs/算法清单.md](docs/算法清单.md#新增自己的算法)。
 
 ## 路线图
 
@@ -370,7 +288,10 @@ docs/          # 计划 · 审计报告 · 开发日志
   [docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md)）；
   扩展到更多方法与数据集的工作仍在继续
 
-详细计划：[docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
+架构与契约：[docs/architecture.md](docs/architecture.md) ·
+验证状态：[docs/validation.md](docs/validation.md) ·
 算法清单：[docs/算法清单.md](docs/算法清单.md) ·
+基准报告：[docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md) ·
+详细计划：[docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
 集成指南：[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) ·
 开发日志：[docs/README_dev_log.md](docs/README_dev_log.md)

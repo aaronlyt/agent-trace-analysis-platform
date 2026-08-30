@@ -39,3 +39,29 @@ Companion infrastructure:
   (AgenTracer route-B idea).
 - `llm/` — `FakeLLM`, a deterministic pseudo-judge that rules on judge-visible text only
   (never reads ground truth), plus an OpenAI-compatible client and the shared call auditor.
+
+## Adding your own algorithm
+
+One module under the stage package, subclass the stage base, decorate with `@register`
+— zero core changes, and it shows up in `atap list`:
+
+```python
+# src/attribute/my_attributor.py
+from atap.attribute.base import Attributor
+from atap.core.registry import register
+from atap.core.schema import Hypothesis
+
+
+@register
+class MyAttributor(Attributor):        # stage = "attribute" is set by the base class
+    name = "my_attributor"
+
+    def run_one(self, bundle, ctx):
+        if bundle.succeeded:
+            return                      # detection ≠ attribution
+        self.emit(bundle, [Hypothesis(
+            agent="reporter", step=3,
+            root_cause="…", root_cause_code="FM-1.3",
+            evidence=["event-3 …"], fix_suggestion="…", confidence=0.6,
+        )])                             # writes artifacts["attribute"]["my_attributor"]
+```
