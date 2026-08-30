@@ -67,12 +67,31 @@ def test_algo_record_maps_gold_and_agents():
     assert t.events[gt["step"]].agent == gt["agent"]
 
 
-def test_handcrafted_uses_role_as_agent():
+def test_handcrafted_uses_role_and_normalizes_orchestrator():
     t = trajectory_from_record(HAND_RECORD, "Hand-Crafted", trace_id="ww-h")
-    assert [e.agent for e in t.events] == ["Orchestrator (thought)", "WebSurfer", "ComputerTerminal"]
+    # Magentic-One routing annotations stripped so the identity matches the
+    # bare-role gold ("Orchestrator (thought)" -> "Orchestrator")
+    assert [e.agent for e in t.events] == ["Orchestrator", "WebSurfer", "ComputerTerminal"]
     assert t.meta["injected_fault"] == {
         "step": 1, "agent": "WebSurfer", "kind": "whoswhen:hand", "mast_code": None,
     }
+
+
+def test_handcrafted_orchestrator_variants_all_normalize():
+    rec = {
+        "is_correct": False, "question": "q", "ground_truth": "x",
+        "history": [
+            {"role": "Orchestrator (-> WebSurfer)", "content": "route"},
+            {"role": "Orchestrator (termination condition)", "content": "stop"},
+            {"role": "WebSurfer", "content": "browse"},
+        ],
+        "mistake_agent": "Orchestrator", "mistake_step": "0",
+    }
+    t = trajectory_from_record(rec, "Hand-Crafted", trace_id="ww-o")
+    assert [e.agent for e in t.events] == ["Orchestrator", "Orchestrator", "WebSurfer"]
+    # the blamed step's agent now equals the bare-role gold -> a real hit
+    gt = t.meta["injected_fault"]
+    assert t.events[gt["step"]].agent == gt["agent"] == "Orchestrator"
 
 
 def test_gold_never_leaks_into_the_judge_view():

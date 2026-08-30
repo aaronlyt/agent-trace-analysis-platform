@@ -63,14 +63,30 @@ scored with the stock `compare` evaluator
 
 | Stack (deepseek-v4-flash) | step hit | agent hit | cost |
 |---|---|---|---|
-| all_at_once | **33.2%** | **50.0%** | $1.43 · 2.9h |
-| all_at_once, thinking off | 32.6% | 44.0% | $0.16 · 9min |
+| all_at_once | **33.2%** | **56.0%**† | $1.43 · 2.9h |
+| all_at_once, thinking off | **33.2%** | 54.3% | $0.16 · 9min |
 | binary_search | 11.4% | 34.2% | $0.26 · 32min |
 
-Model choice dominates — step accuracy is effort-insensitive on algorithm-generated
-traces at 9× lower cost, while reasoning pays only on hand-crafted transcripts.
+Model choice dominates — step accuracy is effort-insensitive (33.2% at both effort
+levels) at 9× lower cost; on hand-crafted transcripts thinking adds only single
+digits once the scoring artifact below is fixed.
 The sandbox acceptance numbers ([docs/validation.md](docs/validation.md)) prove the
 pipeline contract; these numbers prove it on real data.
+
+**vs the paper's GPT-4o baseline (Without-GT).** atap runs the Who&When paper's own
+methods under one contract and, on the harder **step-level** metric, lifts its
+single-pass baseline **~2.9× on algorithm-generated (13.5% → 38.9%) and ~5.9× on
+hand-crafted (3.5% → 20.7%)** — on a cheaper model — while leading agent-level on
+algorithm-generated (51.1% → 60.3%). The gain traces to an engineered single-pass prompt
+(few-shot + MAST vocabulary + *earliest-decisive-error* framing), not the model. Full
+head-to-head, per-method table and caveats: [benchmark report](docs/benchmark_whoswhen_2026-08-30.md).
+
+> † A Magentic-One routing-label artifact understated hand-crafted agent attribution
+> above; fixed in `src/io/whoswhen.py`. The thinking-off row is a native re-run on the
+> fixed adapter (hand-crafted agent 8.6% → **43.1%**, aggregate 44.0% → **54.3%**); the
+> thinking row is post-hoc corrected (hand-crafted **46.6%**, aggregate **56.0%**).
+
+
 
 ## How it works
 

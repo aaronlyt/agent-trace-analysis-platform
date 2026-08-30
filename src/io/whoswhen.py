@@ -12,11 +12,15 @@ Dataset shape (per file, one failed multi-agent run):
   basis, matching the number all_at_once.py cites);
 * ``history`` -> one R0 event per message, in order; ``mistake_step`` is a
   **0-based index into history**, so it becomes the R0 event index directly;
-* agent identity follows the reference implementation exactly:
-  ``name`` for the Algorithm-Generated split, ``role`` for Hand-Crafted
-  (Automated_FA/Lib/utils.py: ``index_agent = "role" if is_handcrafted else
-  "name"``) -- so predicted ``event.agent`` and gold ``mistake_agent`` compare
-  on the same vocabulary;
+* agent identity follows the reference implementation: ``name`` for the
+  Algorithm-Generated split, ``role`` for Hand-Crafted (Automated_FA/Lib/
+  utils.py: ``index_agent = "role" if is_handcrafted else "name"``). For
+  Hand-Crafted, the Magentic-One routing annotation is stripped
+  ("Orchestrator (-> WebSurfer)" / "Orchestrator (thought)" -> "Orchestrator")
+  so predicted ``event.agent`` lands on the same vocabulary as the bare-role
+  gold ``mistake_agent`` -- without this, a correct "Orchestrator" call scores
+  as a miss purely because of the routing label (measured: +19pp hand-crafted
+  agent accuracy);
 * ``mistake_agent`` + ``mistake_step`` -> ``meta["injected_fault"]``
   ``{step, agent, kind, mast_code}`` -- the exact contract compare.py reads
   (``kind`` labels the split for per-kind rollups; ``mast_code`` is None:
@@ -31,6 +35,7 @@ can leak the answer or the labelled step.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -48,6 +53,29 @@ from atap.core.schema import (
 #: the two dataset splits and the message key that carries the acting agent
 SPLIT_AGENT_KEY = {"Algorithm-Generated": "name", "Hand-Crafted": "role"}
 _SPLIT_SHORT = {"Algorithm-Generated": "algo", "Hand-Crafted": "hand"}
+
+#: Magentic-One (Hand-Crafted) roles carry a routing annotation --
+#: "Orchestrator (-> WebSurfer)", "Orchestrator (thought)",
+#: "Orchestrator (termination condition)" -- but the Who&When gold
+#: ``mistake_agent`` is the bare role ("Orchestrator"). Stripping the trailing
+#: parenthetical keeps predicted ``event.agent`` on the gold's vocabulary, so a
+#: correct "Orchestrator" call is not scored as a miss just because the routing
+#: label differs. Anchored to the end so only a trailing "(...)" is removed.
+_ROLE_ROUTING_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def _agent_identity(entry: dict[str, Any], agent_key: str, split: str) -> str:
+    """Acting agent for one message, on the same vocabulary as the gold.
+
+    ``agent_key`` is ``name`` (Algorithm-Generated) or ``role`` (Hand-Crafted).
+    For the Hand-Crafted split the Magentic-One routing annotation is stripped
+    so the identity matches the bare-role gold (see :data:`_ROLE_ROUTING_RE`)."""
+    raw = str(entry.get(agent_key) or entry.get("name") or entry.get("role") or "unknown")
+    if split == "Hand-Crafted":
+        stripped = _ROLE_ROUTING_RE.sub("", raw).strip()
+        if stripped:
+            raw = stripped
+    return raw
 
 
 def _kind_for(agent_id: str, idx: int) -> str:
@@ -79,9 +107,7 @@ def trajectory_from_record(
     history = record.get("history") or []
     events: list[TraceEvent] = []
     for idx, entry in enumerate(history):
-        agent_id = str(
-            entry.get(agent_key) or entry.get("name") or entry.get("role") or "unknown"
-        )
+        agent_id = _agent_identity(entry, agent_key, split)
         content = entry.get("content", "")
         events.append(TraceEvent(
             id=f"e{idx:03d}",
