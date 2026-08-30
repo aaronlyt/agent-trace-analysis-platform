@@ -319,6 +319,20 @@ class MyAttributor(Attributor):        # stage = "attribute" 由基类声明
 - binary_search 3/18——远低于其离线基线 15/18（短轨迹下判官 lower-half 偏置，
   属判官能力上限而非管线缺陷，建议降级辅助使用）。
 
+**外部基准 —— Who&When**（184 条真实多智能体失败轨迹，gold 对判官不可见；完整报告见
+[docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md)）：
+
+| 栈（deepseek-v4-flash） | step | agent | 花费 |
+|---|---|---|---|
+| all_at_once，开思考 | 33.2% | 50.0% | ¥10.2 · 2.9h |
+| all_at_once，关思考 | 32.6% | 44.0% | ¥1.1 · 9min |
+| binary_search，关思考 | 11.4% | 34.2% | ¥1.8 · 32min |
+
+要点：模型选择主导成败——Algorithm-Generated split 上 step 命中对思考档不敏感
+（关思考甚至略高）且成本低 9 倍；思考只在 hand-crafted 转写上见效
+（agent 27.6% vs 8.6%）。binary_search 的下半段偏置在真实数据上复现
+（Hand-Crafted 0/58）。
+
 > **离线数字请正确解读。** 离线沙盒按"判官修复文案是否命中注入故障名"判定
 > "故障已移除"，因此离线恢复率与重放判决是归因命中的确定性函数：它们证明的是
 > 管线契约（假设 → 反馈 → 重放 → 验证）正确，而非判官能力。同理，离线的
@@ -352,7 +366,9 @@ docs/          # 计划 · 审计报告 · 开发日志
 - [x] 阶段四E 活实例桥接：`atap langfuse-eval`（拉取 → 流水线 → Score 回写）+ `atap langfuse-push`
 - [ ] SBFL 作为 L2 先验的实际融合（当前为独立算法）；AgenTracer 式 GRPO 微调 tracer
 - [ ] 沙盒演进 —— 从玩具研究问答沙盒走向更真实的多场景执行环境（更丰富的任务类型、真实工具调用、更多故障注入）
-- [ ] 真实数据集评测 —— 在公开的真实 agent 轨迹数据集/基准上验证管线，替代构造语料的验收数字
+- [ ] 真实数据集评测 —— 公开 Who&When 基准第一轮已完成（184 条真实失败轨迹，见
+  [docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md)）；
+  扩展到更多方法与数据集的工作仍在继续
 
 详细计划：[docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
 算法清单：[docs/算法清单.md](docs/算法清单.md) ·

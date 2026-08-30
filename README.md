@@ -347,6 +347,21 @@ in [docs/audit_上线前真实测试_2026-08-25.md](docs/audit_上线前真实�
   short trajectories; a judge-capability limit, not a pipeline defect — demoted to
   auxiliary use)
 
+**External benchmark — Who&When** (184 real multi-agent failure trajectories, gold
+hidden from the judge; full report in
+[docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md)):
+
+| Stack (deepseek-v4-flash) | step | agent | cost |
+|---|---|---|---|
+| all_at_once, thinking on | 33.2% | 50.0% | ¥10.2 · 2.9h |
+| all_at_once, thinking off | 32.6% | 44.0% | ¥1.1 · 9min |
+| binary_search, thinking off | 11.4% | 34.2% | ¥1.8 · 32min |
+
+Takeaway: model choice dominates — step accuracy is effort-insensitive on the
+Algorithm-Generated split (thinking-off is even slightly ahead) at 9× lower cost;
+reasoning pays only on hand-crafted transcripts (agent 27.6% vs 8.6%).
+binary_search's lower-half bias reproduces on real data (0/58 on Hand-Crafted).
+
 > **Read the offline numbers correctly.** The offline sandbox decides "fault removed" by
 > keyword-matching the judge's fix suggestion against the injected fault name, so offline
 > recovery and replay-verdict numbers are deterministic functions of attribution hits.
@@ -382,7 +397,10 @@ docs/          # plans · audit reports · dev log
 - [x] Phase 4E — live Langfuse bridge: `atap langfuse-eval` (pull → pipeline → Scores write-back) + `atap langfuse-push`
 - [ ] fuse SBFL as an L2 prior (currently a standalone algorithm); AgenTracer-style GRPO fine-tuned tracer
 - [ ] sandbox evolution — grow the toy research-QA sandbox into more realistic multi-scenario execution environments (richer task types, real tool calls, broader fault injection)
-- [ ] real-dataset evaluation — validate the pipeline on public real agent-trajectory datasets/benchmarks, replacing constructed-corpus acceptance numbers
+- [ ] real-dataset evaluation — first round done on the public Who&When benchmark
+  (184 real failure trajectories,
+  [docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md));
+  broadening to more methods and datasets remains
 
 Detailed plans: [docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
 algorithm table: [docs/algorithms.md](docs/algorithms.md) ·
