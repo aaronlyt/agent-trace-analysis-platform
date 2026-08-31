@@ -1,6 +1,6 @@
 # 上线前真实 API 全量测试·审计报告（2026-08-25 执行）
 
-> 依据 `docs/plan_上线前真实测试.md` 执行。模型 **deepseek-v4-flash**
+> 依据 `docs/plan_prelaunch_realtest.md` 执行。模型 **deepseek-v4-flash**
 > （直连 `https://api.deepseek.com`，temperature=0，全档 max_completion_tokens=8192，
 > smoke-corpus 档 16384），密钥全程走环境变量。产物：`runs/final/`（每档
 > llm_calls.jsonl 即计费复核单）。离线 216 测试同日复验全绿（P0-5）。

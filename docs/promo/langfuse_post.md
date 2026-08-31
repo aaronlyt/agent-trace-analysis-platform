@@ -82,7 +82,7 @@ atap langfuse-push    # seed demo corpus
 atap langfuse-eval --config configs/langfuse_eval.yaml --tags demo --dry-run
 ```
 
-Full walkthrough: `docs/集成指南_Langfuse.md` in the repo.
+Full walkthrough: `docs/integration_guide_langfuse.md` in the repo.
 
 **Does it actually work?** First external benchmark — Who&When (ICML 2025 Spotlight,
 184 real failed multi-agent runs, gold hidden from the judge): atap's single-pass

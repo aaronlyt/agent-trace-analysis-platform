@@ -21,7 +21,7 @@ Representative acceptance numbers on the sandbox corpora:
 
 **Real LLMs** (pre-release full test: `deepseek-v4-flash` direct, 8 config tiers, 594
 audited calls, zero judge-prompt leaks, human spot-check found no hallucination; report
-in [docs/audit_上线前真实测试_2026-08-25.md](audit_上线前真实测试_2026-08-25.md)):
+in [docs/audit_prelaunch_realtest_2026-08-25.md](audit_prelaunch_realtest_2026-08-25.md)):
 
 - smoke stack: step 6/6 · agent 6/6 · recovery 6/6
 - **chief: step 17/18 · agent 18/18 — the best real-model localizer**

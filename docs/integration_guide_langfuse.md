@@ -1,6 +1,6 @@
 # 集成指南:Langfuse 活实例外部评估闭环
 
-> 对应计划:[plan_集成.md](plan_集成.md) Phase 1(M1)。
+> 对应计划:[plan_integration.md](plan_integration.md) Phase 1(M1)。
 > 一句话:**从你的 Langfuse 里拉 trace → 跑 atap 六段流水线 → 把归因结果作为 Score
 > 写回原 trace**,失败归因直接出现在你自己的 Langfuse 面板上。
 
@@ -51,7 +51,7 @@ atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf/eval1 --for
 
 真实 LLM 实测(2026-08-29,deepseek-v4-flash):24 trace 全量 96 次调用
 零失败零重试、约 34.6 万 tokens、37 分钟,54 个 score 全部落库;定位质量
-与成本明细见 `docs/plan_集成.md` §10,UI 对照截图
+与成本明细见 `docs/plan_integration.md` §10,UI 对照截图
 `docs/assets/langfuse_real_llm.png`。key 只经 `OPENAI_API_KEY` /
 `OPENAI_BASE_URL` 环境变量注入,不写入任何文件。
 

@@ -206,7 +206,7 @@
 | 依赖 | `langfuse` extra = httpx;dev 也带 httpx(离线 mock 测试用) |
 | 配置 | `configs/langfuse_eval.yaml`(openai 栈;换 `{type: fake}` 即零网络彩排) |
 | 演示环境 | `docker-compose.langfuse.yml`(上游 v3.0.0 compose 派生,镜像钉 `:3`,内置 demo org/project/pk/sk) |
-| 文档 | `docs/集成指南_Langfuse.md`;README 双语新增 "External evaluation" 小节 + 阶段四E 路线图项 |
+| 文档 | `docs/integration_guide_langfuse.md`;README 双语新增 "External evaluation" 小节 + 阶段四E 路线图项 |
 | 测试 | `tests/test_langfuse_live.py` 12 个用例:映射/过滤/outcome/score 格式/防泄漏/幂等/push↔离线适配互通/push 拒绝 raw-span-only(MockTransport)+ CLI 端到端 写入→跳过→force→dry-run(线程 stub 服务器);全仓 344 测试通过 |
 | 不变量 | `io/*.py` 自动被 rule 3 覆盖,零新增例外;`core/` 与算法模块零改动 |
 | 顺带修复 | `tests/test_schema_registry_config.py` 两段配置补 `represent/canonical_events`——用户在途的 `requires` 声明批次(judge_eval/mast_judge 等新增依赖)与该存量测试冲突,与本集成无关,按其意图更新了测试 |

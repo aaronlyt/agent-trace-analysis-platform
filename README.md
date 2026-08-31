@@ -117,7 +117,7 @@ head-to-head, per-method table and caveats: [benchmark report](docs/benchmark_wh
 
 The full algorithm table (24 methods, one paper each) and the companion
 infrastructure notes live in **[docs/algorithms.md](docs/algorithms.md)**
-([中文版](docs/算法清单.md)).
+([中文版](docs/algorithms.zh-CN.md)).
 
 ## Installation
 
@@ -262,7 +262,7 @@ completed are skipped (the trace-level `atap:root-cause` is written last and dou
 as the completion marker, so an interrupted batch is simply re-evaluated; `--force`
 re-evaluates regardless). Credentials come from the environment only. Seeding a demo
 instance (`atap langfuse-push`) and the full round-trip walkthrough live in
-[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) and
+[docs/integration_guide_langfuse.md](docs/integration_guide_langfuse.md) and
 `docker-compose.langfuse.yml`.
 
 ## Configuration — the pluggable core
@@ -316,6 +316,6 @@ Architecture & contracts: [docs/architecture.md](docs/architecture.md) ·
 validation status: [docs/validation.md](docs/validation.md) ·
 algorithm table: [docs/algorithms.md](docs/algorithms.md) ·
 benchmark report: [docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md) ·
-detailed plans: [docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
-integration guide: [docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) ·
+detailed plans: [docs/plan.md](docs/plan.md) · [docs/plan_stage4.md](docs/plan_stage4.md) ·
+integration guide: [docs/integration_guide_langfuse.md](docs/integration_guide_langfuse.md) ·
 development log: [docs/README_dev_log.md](docs/README_dev_log.md)

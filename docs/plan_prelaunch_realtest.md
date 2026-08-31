@@ -93,7 +93,7 @@ usage / http_requests / latency / ok）+ `artifacts/`（Hypothesis、MAST 标签
 2. **人工抽检**：每 tag 抽 3 条 response，核对三件事——引用步号真实存在、
    引用内容与轨迹 payload 逐字一致、结论不包含轨迹外的世界知识（幻觉）。
    judge_eval 的 findings、mast_judge 的 reason、claim_audit 的六元组为重点。
-3. **归档**：审计报告写 `docs/audit_上线前真实测试_<日期>.md`，附每档
+3. **归档**：审计报告写 `docs/audit_prelaunch_realtest_<date>.md`，附每档
    run.log 摘要；runs/final/ 全量保留（llm_calls.jsonl 即计费复核单）。
 
 ## 4. 风险与预案

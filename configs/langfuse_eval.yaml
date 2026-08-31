@@ -13,7 +13,7 @@
 #
 # For a zero-network rehearsal of the whole loop, switch llm to {type: fake}
 # and point LANGFUSE_* at a self-hosted instance seeded via `atap langfuse-push`
-# (see docs/集成指南_Langfuse.md).
+# (see docs/integration_guide_langfuse.md).
 run_name: langfuse-eval
 seed: 7
 

@@ -3,7 +3,7 @@
 模型设置：nvidia/nemotron-3.5-lightning:free（密钥走环境变量 `OPENAI_API_KEY`，绝不落盘。历史版本曾在这一行误贴明文 OpenRouter key——该 key 应视为已泄露并**立即在 OpenRouter 后台吊销**（此事代码层无法代办）；本地 git 历史已于 2026-08-27 用 `git filter-repo --replace-text` 全量清洗并复验无残留，清洗前完整备份在仓库外 `../atap-pre-cleanup-backup.bundle`，清洗时仓库无任何远端、未曾外推。）
 
 
-复现 [《Agent 轨迹分析与错误归因：整体流程·架构·算法与文献》](../../paper_research/general/papers/research_surveys/agents/error_analysis/整体流程架构与算法文献.md)
+复现 [《Agent 轨迹分析与错误归因：整体流程·架构·算法与文献》](../../paper_research/general/papers/research_surveys/agents/error_analysis/overview_architecture_algorithms.md)
 的六环节流程（采集 → 表征 → 分析评测 → 错误分类打标 → 失败归因 → 恢复闭环），
 做成 **transformers 式可插拔框架**：每个算法一个模块、继承阶段基类、注册进
 Registry、YAML 配置组合 pipeline；算法之间只通过产物（artifact）解耦，
@@ -148,8 +148,8 @@ SBFL 频谱 4/6（miss 两例为方法边界：一次性动作被 γ 压制、�
 canonical_events 拍平后跑 4A 确定性栈结果不变（rg_ug 仍 UG_true_extraction）。
 
 阶段四论文一致性审计（2026-08-25）：11 路只读 subagent 逐模块对照
-refs/ 原文（报告 `docs/audit_阶段四论文一致性_2026-08-25.md`，与阶段一~三
-的 `docs/audit_论文一致性_2026-08-25.md` 互补）。结论：机制层高保真
+refs/ 原文（报告 `docs/audit_stage4_paper_consistency_2026-08-25.md`，与阶段一~三
+的 `docs/audit_paper_consistency_2026-08-25.md` 互补）。结论：机制层高保真
 （rg_ug 逐式一致、CodeTracer 挂载规则对齐、CHIEF/DoVer/DRIFT 主干
 忠实）；2 处 🔴 已修复（dover classify 运行期回显故障名 →
 `_redact_fault_names` + 运行期防泄漏回归；otel traceId/spanId 违反
@@ -235,7 +235,7 @@ free-models-per-day**（所有 `:free` 共享、非每模型），`stealth/ox-al
 独立池（96+ 次 HTTP 无 429）。
 
 上线前真实全量测试（2026-08-25，deepseek-v4-flash 直连，`configs/final_*.yaml`
-八档 → `runs/final/`，审计报告 `docs/audit_上线前真实测试_2026-08-25.md`）：
+八档 → `runs/final/`，审计报告 `docs/audit_prelaunch_realtest_2026-08-25.md`）：
 **7/8 档 exit 0、594 条调用零业务失败、判官 prompt 泄漏 0 命中、人工抽检
 无幻觉**。P1 过线 6/7——smoke 6/6·6/6·恢复 6/6；**chief 17/18·18/18**（真实
 模型最佳）；claim 覆盖 14/18；tree 14/18；dover 恢复 18/18；v3 闭环 18/18；
@@ -332,4 +332,4 @@ Classifier/Attributor/Recoverer`，声明 `stage`/`name`，加 `@register`——
 - SBFL 作为 L2 先验的实际融合（当前为独立算法）、AgenTracer GRPO
       微调 tracer 路线
 
-详细计划见 [docs/plan_阶段四.md](docs/plan_阶段四.md)，进度见 [docs/plan.md](docs/plan.md)。
+详细计划见 [docs/plan_stage4.md](docs/plan_stage4.md)，进度见 [docs/plan.md](docs/plan.md)。

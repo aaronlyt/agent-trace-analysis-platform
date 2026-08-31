@@ -146,7 +146,7 @@ failures=0；compare 表：v3 全栈 15/18·18/18·18/18·147 calls vs SBFL 12/1
 对照 refs/ 原文对全部 12 个算法模块逐个独立审计（canonical_events/ssf/
 action_signature/judge_eval/loop_detect/mast_judge+taxonomy/rule_pack/
 all_at_once/binary_search/sbfl/targeted_rerun/feedback_injection，报告见
-`audit_论文一致性_2026-08-25.md`）。总评：硬数值（公式/轮数/阈值）全部
+`audit_paper_consistency_2026-08-25.md`）。总评：硬数值（公式/轮数/阈值）全部
 一致，多数偏离已声明；修复发现的全部实质问题：
 
 - **loop_detect 窗口口径**（唯一实质算法语义偏离）：re_read_churn/
@@ -190,7 +190,7 @@ R2 信息依赖图（含 CHIEF 层次因果图）、R3 claim 台账（DRIFT）�
 重放（TraceElephant 2604.22708 / DoVer）、Langfuse v3 / OTel GenAI 采集适配器、
 AgenTracer GRPO 微调 tracer 路线。
 
-## 轮次三：阶段四A 确定性层 ✅（2026-08-25，计划见 plan_阶段四.md）
+## 轮次三：阶段四A 确定性层 ✅（2026-08-25，计划见 plan_stage4.md）
 
 对照 refs/ 原文实现五个确定性模块（其中 CHIEF 2602.23701 与 DoVer
 2512.06749 两篇已用 paper-fetch 补入 refs/ 供后续轮次）：
@@ -244,7 +244,7 @@ inducer 7）；demo 六故障 6/6×4 与 v3 全栈 15/18·147 calls、SBFL 12/18
 
 ### 轮次四~六（阶段四B/C/D，待实施）
 
-见 plan_阶段四.md：4B=claim_ledger+claim_audit（DRIFT）/tree_diagnosis
+见 plan_stage4.md：4B=claim_ledger+claim_audit（DRIFT）/tree_diagnosis
 （CodeTracer 诊断）/hcg+chief（CHIEF）；4C=沙盒检查点重放基建+
 counterfactual_replay（TraceElephant）+dover（DoVer）；4D=langfuse/
 otel 采集适配器。
@@ -284,7 +284,7 @@ chief 18/18·54 calls、tree 18/18·36 calls、claim 12/18·57 calls、v3 回归
 
 ### 轮次五~六（阶段四C/D，待实施）
 
-见 plan_阶段四.md：4C=沙盒检查点重放基建+counterfactual_replay
+见 plan_stage4.md：4C=沙盒检查点重放基建+counterfactual_replay
 （TraceElephant）+dover（DoVer）；4D=langfuse/otel 采集适配器。
 
 ## 轮次五：阶段四C L3 反事实重放 ✅（2026-08-25）
@@ -342,7 +342,7 @@ semconv）、roundtrip 验证。
 11 路只读 subagent 逐模块对照 refs/ 原文（idg/hierarchy_tree+tree_
 diagnosis/rg_ug/inducer/drift_detect/claim_ledger+claim_audit/hcg+chief/
 counterfactual_replay/dover/langfuse/otel，报告
-`audit_阶段四论文一致性_2026-08-25.md`）。修复：dover classify 运行期
+`audit_stage4_paper_consistency_2026-08-25.md`）。修复：dover classify 运行期
 回显故障名（🔴，`_redact_fault_names` + 运行期防泄漏回归测试）、otel
 traceId/spanId 非 OTLP hex（🔴，sha256 派生 + atap.* 原 id 生存）、
 dover trial 区间 off-by-one、langfuse outcome.score/ts 恢复；约 30 处
@@ -412,8 +412,8 @@ test_invariants 的 SRC 取 `Path(atap.__file__).parent`，位置无关；
 
 ## 轮次十：上线前真实全量测试执行（2026-08-25，deepseek-v4-flash 直连）
 
-按 `docs/plan_上线前真实测试.md` 执行八档（`configs/final_*.yaml`，
-产物 `runs/final/`，报告 `docs/audit_上线前真实测试_2026-08-25.md`）：
+按 `docs/plan_prelaunch_realtest.md` 执行八档（`configs/final_*.yaml`，
+产物 `runs/final/`，报告 `docs/audit_prelaunch_realtest_2026-08-25.md`）：
 
 * **7/8 档 exit 0、594 条调用零业务失败、判官 prompt 泄漏 0 命中**；
   人工抽检（含逐字对轨核验）无幻觉实锤。P1 过线 6/7：smoke

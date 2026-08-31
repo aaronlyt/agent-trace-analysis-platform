@@ -2,7 +2,7 @@
 
 > 24 algorithms across 5 stages (collection is handled by the `io/` adapters), each
 > faithful to a specific paper. This table is the expanded companion to the
-> [README overview](../README.md) · [简体中文版](算法清单.md).
+> [README overview](../README.md) · [简体中文版](algorithms.zh-CN.md).
 
 | Stage | Module | Method | Paper |
 |---|---|---|---|

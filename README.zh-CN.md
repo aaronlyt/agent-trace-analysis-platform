@@ -26,9 +26,9 @@ atap demo    # 离线端到端流水线：FakeLLM 伪判官、确定性、零网
 
 <sub><b>阶段与方法 —— 24 个算法</b></sub>
 
-[![采集](https://img.shields.io/badge/%E9%87%87%E9%9B%86-%E2%9C%85_1-brightgreen)](docs/算法清单.md) [![表征](https://img.shields.io/badge/%E8%A1%A8%E5%BE%81-%E2%9C%85_7-brightgreen)](docs/算法清单.md) [![分析](https://img.shields.io/badge/%E5%88%86%E6%9E%90-%E2%9C%85_3-brightgreen)](docs/算法清单.md)
+[![采集](https://img.shields.io/badge/%E9%87%87%E9%9B%86-%E2%9C%85_1-brightgreen)](docs/algorithms.zh-CN.md) [![表征](https://img.shields.io/badge/%E8%A1%A8%E5%BE%81-%E2%9C%85_7-brightgreen)](docs/algorithms.zh-CN.md) [![分析](https://img.shields.io/badge/%E5%88%86%E6%9E%90-%E2%9C%85_3-brightgreen)](docs/algorithms.zh-CN.md)
 
-[![分类](https://img.shields.io/badge/%E5%88%86%E7%B1%BB-%E2%9C%85_3-brightgreen)](docs/算法清单.md) [![归因](https://img.shields.io/badge/%E5%BD%92%E5%9B%A0-%E2%9C%85_8-brightgreen)](docs/算法清单.md) [![恢复](https://img.shields.io/badge/%E6%81%A2%E5%A4%8D-%E2%9C%85_3-brightgreen)](docs/算法清单.md)
+[![分类](https://img.shields.io/badge/%E5%88%86%E7%B1%BB-%E2%9C%85_3-brightgreen)](docs/algorithms.zh-CN.md) [![归因](https://img.shields.io/badge/%E5%BD%92%E5%9B%A0-%E2%9C%85_8-brightgreen)](docs/algorithms.zh-CN.md) [![恢复](https://img.shields.io/badge/%E6%81%A2%E5%A4%8D-%E2%9C%85_3-brightgreen)](docs/algorithms.zh-CN.md)
 
 </div>
 
@@ -36,7 +36,7 @@ Agent Trace Analysis Platform（**atap**）是**架在你现有可观测性栈�
 恢复层**：从 Langfuse（或 JSONL / OTel / Phoenix 导出）拉取轨迹，定位每条失败的
 **责任 agent 与致因步**，把结论作为 Langfuse score 写回原处。
 
-- **24 个可插拔算法、5 个阶段**——一个算法一个模块，YAML 组合，产物解耦（[docs/算法清单.md](docs/算法清单.md)）
+- **24 个可插拔算法、5 个阶段**——一个算法一个模块，YAML 组合，产物解耦（[docs/algorithms.zh-CN.md](docs/algorithms.zh-CN.md)）
 - **确定性离线模式**——FakeLLM 判官 + 注入故障沙盒，零网络
 - **真实 LLM**——任意 OpenAI 兼容 API，逐调用审计
 - **Langfuse 集成**——`atap langfuse-eval` 把根因 score 与 blamed-step 标记写回你的 trace（[见下文](#与-langfuse-集成)）
@@ -96,7 +96,7 @@ ICML 2025）——184 条真实多智能体失败轨迹，gold 对判官不可�
 ```
 
 完整算法表格（24 个算法、每个对应一篇文献）与配套基础设施说明移至
-**[docs/算法清单.md](docs/算法清单.md)**（[English](docs/algorithms.md)）。
+**[docs/algorithms.zh-CN.md](docs/algorithms.zh-CN.md)**（[English](docs/algorithms.md)）。
 
 ## 安装
 
@@ -233,7 +233,7 @@ atap langfuse-eval --config configs/langfuse_eval.yaml --out runs/lf1 \
 `--dry-run` 只打印不发请求；此前批次已完整评估的 trace 自动跳过（trace 级
 `atap:root-cause` 最后写入、充当完成标记，被打断的半批次下次自动重评；`--force`
 无条件重评）。凭据只从环境变量读取。自建演示实例（`atap langfuse-push` 播种）与
-完整 round-trip 见 [docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) 和
+完整 round-trip 见 [docs/integration_guide_langfuse.md](docs/integration_guide_langfuse.md) 和
 `docker-compose.langfuse.yml`。
 
 ## 配置组合 —— 可插拔的核心
@@ -267,7 +267,7 @@ stages:
 
 在对应 stage 包下写一个模块：继承阶段基类，加 `@register`——零改核心，
 `atap list` 即见。完整示例见
-[docs/算法清单.md](docs/算法清单.md#新增自己的算法)。
+[docs/algorithms.zh-CN.md](docs/algorithms.zh-CN.md#新增自己的算法)。
 
 ## 路线图
 
@@ -284,8 +284,8 @@ stages:
 
 架构与契约：[docs/architecture.md](docs/architecture.md) ·
 验证状态：[docs/validation.md](docs/validation.md) ·
-算法清单：[docs/算法清单.md](docs/算法清单.md) ·
+算法清单：[docs/algorithms.zh-CN.md](docs/algorithms.zh-CN.md) ·
 基准报告：[docs/benchmark_whoswhen_2026-08-30.md](docs/benchmark_whoswhen_2026-08-30.md) ·
-详细计划：[docs/plan.md](docs/plan.md) · [docs/plan_阶段四.md](docs/plan_阶段四.md) ·
-集成指南：[docs/集成指南_Langfuse.md](docs/集成指南_Langfuse.md) ·
+详细计划：[docs/plan.md](docs/plan.md) · [docs/plan_stage4.md](docs/plan_stage4.md) ·
+集成指南：[docs/integration_guide_langfuse.md](docs/integration_guide_langfuse.md) ·
 开发日志：[docs/README_dev_log.md](docs/README_dev_log.md)

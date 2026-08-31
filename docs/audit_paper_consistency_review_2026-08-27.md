@@ -2,7 +2,7 @@
 
 > 范围：src/ 下全部 21 组算法模块 + 2 个 io 适配器，逐组一个只读 subagent，
 > 三方比对：refs/ 论文原文（paper.md）× 实现代码 × 测试（读断言 + 实跑）。
-> 与前两轮（audit_论文一致性_2026-08-25.md、audit_阶段四论文一致性_2026-08-25.md）
+> 与前两轮（audit_paper_consistency_2026-08-25.md、audit_stage4_paper_consistency_2026-08-25.md）
 > 互补：本轮重点（a）验证前两轮"已修复"声称是否真实落地；（b）用新鲜眼光
 > 找新问题；（c）评估测试是否真正断言了论文机制。
 > 判定口径：✅忠实 / 🟡已声明适配 / 🔴未声明偏离 / ⚫误读 / 🐛bug；
@@ -101,7 +101,7 @@ sbfl 六式 / rg_ug 集合运算 / binary_search Algorithm 2 经独立手工验�
    set，顺序随哈希盐漂移——跨进程提案 name 不稳定（6 进程实测出现两种
    name），违背 inducer"确定性"声明，accepted 词表可漂移。
 10. **inducer kinship 机制实效失效**：本域 kinship 恒 None（实测），
-    plan_阶段四.md:195 验收"kinship 指向 FM-2.x"未达，"惰性"未声明。
+    plan_stage4.md:195 验收"kinship 指向 FM-2.x"未达，"惰性"未声明。
 11. **counterfactual_replay 步独立性漏洞**：policy.py:801 fault_removed
     只看 edit_text 是否命中故障关键词、与干预步无关——对任意步（含症状步）
     施以含故障名的编辑即判 validated；"滤伪因果"实由伪判官 oracle 兜底

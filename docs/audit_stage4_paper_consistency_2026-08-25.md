@@ -2,9 +2,9 @@
 
 > 范围：阶段四新增的 11 组算法/适配器，逐个与 refs/ 论文原文独立比对
 > （每组一个只读 subagent，读 paper.md 原文 + 实现代码 + 伪判官 handler
-> + plan_阶段四.md 契约）。判定口径：✅忠实 / 🟡已声明适配 / 🔴未声明
+> + plan_stage4.md 契约）。判定口径：✅忠实 / 🟡已声明适配 / 🔴未声明
 > 偏离或违规 / ⚫误读（对论文的解读本身有误）。
-> 前置报告：阶段一~三 12 模块审计见 audit_论文一致性_2026-08-25.md。
+> 前置报告：阶段一~三 12 模块审计见 audit_paper_consistency_2026-08-25.md。
 > 本轮审计后主线已落地修复与标注修正（见 §3/§4），验收 210 测试全绿。
 
 ## 1. 总览
@@ -104,7 +104,7 @@ OTel id 格式）+ 约 30 处标注失实/缺口，本轮全部处理。
   `include_outcome=False`，须同步核伪判官 handler 是否依赖该行——未盲改。
 * HCG OTAR Result 槽语义（AGENT_MESSAGE 并入 result / VERIFIER 归
   observation）：影响 artifact 字段，保留为声明边界。
-* inducer 与 plan_阶段四 契约差异：贪心代表制 vs 计划的层次聚合、
+* inducer 与 plan_stage4 契约差异：贪心代表制 vs 计划的层次聚合、
   taxonomy list/auto_accept 子命令未实现——建议改 plan 或后续补。
 * rg_ug：UG_boundary 在本沙盒不可达（gold 恒单文档）；env 检索无
   top-K=5 截断（保真度边界）。
