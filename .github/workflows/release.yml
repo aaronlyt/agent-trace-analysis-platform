@@ -1,0 +1,20 @@
+# PyPI release via Trusted Publishing (OIDC, no token in secrets).
+# Matches the publisher registered on pypi.org: project "atap",
+# owner aaronlyt, repo agent-trace-analysis-platform, workflow release.yml.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # PyPI trusted publisher OIDC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
